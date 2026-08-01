@@ -57,6 +57,14 @@
   :type 'function
   :group 'context-panels)
 
+(defcustom context-panels-reveal-active-side-item t
+  "Whether source navigation should reveal the active side-panel item.
+When non-nil and the selected window is the source buffer, active highlighting
+may scroll the side panel just enough to make the active side item visible.  It
+never scrolls the source window."
+  :type 'boolean
+  :group 'context-panels)
+
 (defvar context-panels-ignored-source-file-functions nil
   "Predicate hooks for files that should not become context-panel sources.
 Each function receives an absolute file name and should return non-nil when the
@@ -67,11 +75,22 @@ file is an auxiliary sidecar or generated artifact rather than a source file.")
   "Default face for context top markers."
   :group 'context-panels)
 
+(defface context-panels-active-face
+  '((t :inherit highlight))
+  "Fallback face for active context-panel source ranges and side rows."
+  :group 'context-panels)
+
 (defvar-local context-panels-providers nil
   "Provider descriptors registered for the current source buffer.")
 
 (defvar-local context-panels-top-marker-overlays nil
   "Top marker overlays rendered for registered providers.")
+
+(defvar-local context-panels-active-source-overlays nil
+  "Active source range overlays owned by context-panels.")
+
+(defvar-local context-panels-active-side-overlays nil
+  "Active side item overlays owned by context-panels.")
 
 (defvar-local context-panels-source-buffer nil
   "Source buffer associated with the current context panel buffer.")
@@ -453,6 +472,39 @@ When SOURCE-BUFFER is nil, infer it from the current context."
   (or (context-panels-item-anchor-position item)
       most-positive-fixnum))
 
+(defun context-panels--active-face (item provider sidep)
+  "Return active face for ITEM from PROVIDER.
+When SIDEP is non-nil, resolve the side-panel face; otherwise resolve the
+source-range face."
+  (or (plist-get item (if sidep :side-face :source-face))
+      (plist-get item :face)
+      (plist-get provider (if sidep :active-side-face :active-source-face))
+      (plist-get provider :active-face)
+      'context-panels-active-face))
+
+(defun context-panels--active-source-range (source-buffer item provider)
+  "Return active source range for ITEM in SOURCE-BUFFER.
+Provider `:active-source-range' overrides generic item metadata.  Anchor-only
+items expand to their logical source line."
+  (with-current-buffer source-buffer
+    (let ((range (when-let* ((function (plist-get provider :active-source-range)))
+                   (funcall function source-buffer item))))
+      (unless range
+        (let ((start (or (plist-get item :source-start)
+                         (plist-get item :anchor-pos)
+                         (context-panels-item-anchor-position item)))
+              (end (plist-get item :source-end)))
+          (when start
+            (setq range
+                  (if end
+                      (cons start end)
+                    (save-excursion
+                      (goto-char start)
+                      (cons (line-beginning-position)
+                            (line-end-position))))))))
+      (when (and range (context-panels-valid-region-p (car range) (cdr range)))
+        range))))
+
 (defun context-panels--sort-items (items providers)
   "Return ITEMS sorted by viewport/source position and provider priority."
   (sort (copy-sequence items)
@@ -646,6 +698,7 @@ visible viewport rows."
 			  (or (> (length providers) 1)
 			      (not (plist-get (car providers) :render-side-panel))))))
     (let ((inhibit-read-only t))
+      (context-panels-clear-active-highlights source-buffer (current-buffer))
       (erase-buffer)
       (if composable
 	  (context-panels--render-composed-side-panel source-buffer items providers)
@@ -653,7 +706,170 @@ visible viewport rows."
       (when (= (buffer-size) 0)
 	(context-panels--default-render-side-panel source-buffer items))
       (goto-char (point-min))
-      (goto-char (point-min)))))
+      (goto-char (point-min))
+      (context-panels-update-active-highlights source-buffer))))
+
+(defun context-panels--active-side-item-at-point ()
+  "Return the active side item at point, or nil."
+  (and (buffer-live-p context-panels-source-buffer)
+       (context-panels-item-at-point)))
+
+(defun context-panels--items-active-at-source-point (source-buffer)
+  "Return context items active at point in SOURCE-BUFFER."
+  (with-current-buffer source-buffer
+    (let ((pos (point))
+          (providers (context-panels-registered-providers))
+          active)
+      (dolist (item (context-panels-collect-side-items source-buffer))
+        (when-let* ((provider (context-panels--item-provider item providers))
+                    (range (context-panels--active-source-range
+                            source-buffer item provider)))
+          (when (and (>= pos (car range)) (< pos (max (1+ (car range)) (cdr range))))
+            (push item active))))
+      (nreverse active))))
+
+(defun context-panels--active-items (source-buffer)
+  "Return active items for SOURCE-BUFFER according to selected window focus."
+  (let ((selected (selected-window)))
+    (cond
+     ((and (window-live-p selected)
+           (eq (window-buffer selected) source-buffer))
+      (context-panels--items-active-at-source-point source-buffer))
+     ((and (window-live-p selected)
+           (with-current-buffer (window-buffer selected)
+             (eq context-panels-source-buffer source-buffer)))
+      (with-current-buffer (window-buffer selected)
+        (when-let* ((item (context-panels--active-side-item-at-point)))
+          (list item))))
+     (t
+      (context-panels--items-active-at-source-point source-buffer)))))
+
+(defun context-panels--clear-active-source-highlights (source-buffer)
+  "Clear active source overlays from SOURCE-BUFFER."
+  (when (buffer-live-p source-buffer)
+    (with-current-buffer source-buffer
+      (context-panels-delete-overlays context-panels-active-source-overlays)
+      (setq context-panels-active-source-overlays nil))))
+
+(defun context-panels--clear-active-side-highlights (panel-buffer)
+  "Clear active side overlays from PANEL-BUFFER."
+  (when (buffer-live-p panel-buffer)
+    (with-current-buffer panel-buffer
+      (context-panels-delete-overlays context-panels-active-side-overlays)
+      (setq context-panels-active-side-overlays nil))))
+
+(defun context-panels-clear-active-highlights (&optional source-buffer panel-buffer)
+  "Clear native active highlights for SOURCE-BUFFER and PANEL-BUFFER."
+  (context-panels--clear-active-source-highlights
+   (or source-buffer (context-panels--visible-source-buffer)))
+  (context-panels--clear-active-side-highlights
+   (or panel-buffer
+       (and (context-panels--visible-side-panel-window)
+            (window-buffer (context-panels--visible-side-panel-window))))))
+
+(defun context-panels--side-item-spans ()
+  "Return list of (ITEM START END) spans in the current side panel buffer."
+  (let (spans)
+    (save-excursion
+      (goto-char (point-min))
+      (while (< (point) (point-max))
+        (let* ((start (point))
+               (item (context-panels-item-at-position start))
+               (end (or (next-single-property-change
+                         start 'context-panels-item nil (point-max))
+                        (point-max))))
+          (when item
+            (push (list item start end) spans))
+          (goto-char (max (1+ start) end)))))
+    (nreverse spans)))
+
+(defun context-panels--highlight-active-source (source-buffer items providers)
+  "Highlight source range for first active item in ITEMS."
+  (context-panels--clear-active-source-highlights source-buffer)
+  (when-let* ((item (car items))
+              (provider (context-panels--item-provider item providers))
+              (range (context-panels--active-source-range
+                      source-buffer item provider)))
+    (with-current-buffer source-buffer
+      (let ((overlay (context-panels-make-range-overlay
+                      (car range) (cdr range)
+                      :face (context-panels--active-face item provider nil)
+                      :properties (list 'priority 1000))))
+        (push overlay context-panels-active-source-overlays)))))
+
+(defun context-panels--highlight-active-side-items (panel-buffer items source-buffer)
+  "Highlight active ITEMS in PANEL-BUFFER."
+  (context-panels--clear-active-side-highlights panel-buffer)
+  (when (and (buffer-live-p panel-buffer) items)
+    (let* ((keys (mapcar #'context-panels-item-key items))
+           (providers (with-current-buffer source-buffer
+                        (context-panels-registered-providers))))
+      (with-current-buffer panel-buffer
+        (dolist (span (context-panels--side-item-spans))
+          (pcase-let ((`(,item ,start ,end) span))
+            (when (member (context-panels-item-key item) keys)
+              (when-let* ((provider (context-panels--item-provider item providers)))
+                (let ((overlay (make-overlay start end nil t nil)))
+                  (overlay-put overlay 'face
+                               (context-panels--active-face item provider t))
+                  (push overlay context-panels-active-side-overlays))))))))))
+
+(defun context-panels--position-low-in-window-p (position window)
+  "Return non-nil when POSITION is visible but low in WINDOW."
+  (when-let* ((posn (posn-at-point position window))
+              (xy (posn-x-y posn))
+              (y (cdr xy)))
+    (> y (* 0.8 (window-pixel-height window)))))
+
+(defun context-panels--reveal-active-side-item (panel-window)
+  "Reveal the first active side item in PANEL-WINDOW when needed.
+Image rows can make line-based visibility checks optimistic, so also reveal
+items that are technically visible but near the bottom of the side window."
+  (when (and context-panels-reveal-active-side-item
+             (window-live-p panel-window))
+    (with-current-buffer (window-buffer panel-window)
+      (when-let* ((overlay (car (last context-panels-active-side-overlays)))
+                  (start (overlay-start overlay)))
+        (let ((selected (selected-window))
+              (max-steps (max 1 (* 2 (window-body-height panel-window)))))
+          (unwind-protect
+              (progn
+                (select-window panel-window)
+                (set-window-point panel-window start)
+                ;; Prefer Emacs' normal conservative scrolling over recentering:
+                ;; move by one line at a time until the item is revealed.  This
+                ;; preserves as much context as possible for variable-height
+                ;; image rows.
+                (let ((steps 0)
+                      (scroll-margin 0)
+                      (scroll-conservatively most-positive-fixnum)
+                      (scroll-step 1))
+                  (while (and (< steps max-steps)
+                              (< start (window-start panel-window)))
+                    (ignore-errors (scroll-down-command 1))
+                    (setq steps (1+ steps)))
+                  (while (and (< steps max-steps)
+                              (or (not (pos-visible-in-window-p
+                                        start panel-window))
+                                  (context-panels--position-low-in-window-p
+                                   start panel-window)))
+                    (ignore-errors (scroll-up-command 1))
+                    (setq steps (1+ steps)))))
+            (when (window-live-p selected)
+              (select-window selected))))))))
+
+(defun context-panels-update-active-highlights (&optional source-buffer)
+  "Update native active source and side-panel highlights."
+  (when-let* ((source (or source-buffer (context-panels--visible-source-buffer)))
+              (panel-window (context-panels--visible-side-panel-window)))
+    (let* ((panel-buffer (window-buffer panel-window))
+           (items (context-panels--active-items source))
+           (providers (with-current-buffer source
+                        (context-panels-registered-providers))))
+      (context-panels--highlight-active-source source items providers)
+      (context-panels--highlight-active-side-items panel-buffer items source)
+      (when (eq (window-buffer (selected-window)) source)
+        (context-panels--reveal-active-side-item panel-window)))))
 
 (defun context-panels--split-side-panel-window (panel-buffer source-window width)
   "Display PANEL-BUFFER next to SOURCE-WINDOW with WIDTH as a fallback."
@@ -727,7 +943,8 @@ visible viewport rows."
       (setq context-panels--temporarily-hidden-p nil)
       (context-panels--run-side-panel-hook
        'context-panels-after-side-panel-open-hook
-       source panel-buffer source-window panel-window))
+       source panel-buffer source-window panel-window)
+      (context-panels-update-active-highlights source))
     panel-buffer))
 
 ;;;###autoload
@@ -761,6 +978,7 @@ When PRESERVE-DESIRE is non-nil, keep workspace desired-panel state."
        source panel-buffer
        (and (buffer-live-p source) (get-buffer-window source t))
        panel-window)
+      (context-panels-clear-active-highlights source panel-buffer)
       (when (window-live-p panel-window)
 	(delete-window panel-window))
       (bury-buffer panel-buffer)
@@ -1044,7 +1262,8 @@ editable prompt point that reconciliation must not disturb."
 	      (setq context-panels--last-source-buffer source))
 	    (when (or context-panels--desired-side-panel-p
 		      (context-panels--visible-side-panel-window))
-	      (context-panels--refresh-scrolled-source-windows))
+	      (context-panels--refresh-scrolled-source-windows)
+              (context-panels-update-active-highlights))
 	    (when (or context-panels--desired-side-panel-p
 		      context-panels--desired-bottom-view-id
 		      (context-panels--visible-side-panel-window)

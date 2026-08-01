@@ -114,6 +114,127 @@
         (kill-buffer source))
       (delete-other-windows))))
 
+
+(ert-deftest context-panels-highlights-side-items-from-source-point ()
+  "Source point activates matching visible side items and source range."
+  (let ((source (get-buffer-create "*context-panels-test-active-source*")))
+    (unwind-protect
+        (progn
+          (delete-other-windows)
+          (switch-to-buffer source)
+          (erase-buffer)
+          (insert "one\ntwo\nthree\n")
+          (let ((start (progn (goto-char (point-min)) (forward-line 1) (point)))
+                (end (progn (end-of-line) (point))))
+            (context-panels-mode 1)
+            (context-panels-register-provider
+             (list :name 'test
+                   :side-panel-buffer-name "*context-panels-test-active-panel*"
+                   :active-face 'match
+                   :collect-side-items
+                   (lambda (_source)
+                     (list (list :id 'two-a :label "two-a" :source-start start :source-end end)
+                           (list :id 'two-b :label "two-b" :source-start start :source-end end)))
+                   :render-side-item
+                   (lambda (_source item)
+                     (insert (plist-get item :label) "\n"))))
+            (let ((panel-buffer (context-panels-open source)))
+              (goto-char start)
+              (context-panels-update-active-highlights source)
+              (should (= 1 (length context-panels-active-source-overlays)))
+              (should (eq 'match (overlay-get (car context-panels-active-source-overlays) 'face)))
+              (with-current-buffer panel-buffer
+                (should (= 2 (length context-panels-active-side-overlays)))
+                (should (cl-every (lambda (overlay)
+                                    (eq 'match (overlay-get overlay 'face)))
+                                  context-panels-active-side-overlays))))))
+      (when (get-buffer "*context-panels-test-active-panel*")
+        (kill-buffer "*context-panels-test-active-panel*"))
+      (when (buffer-live-p source)
+        (kill-buffer source))
+      (delete-other-windows))))
+
+(ert-deftest context-panels-reveals-active-side-item-from-source-point ()
+  "Source-driven highlighting may scroll side panel to reveal active item."
+  (let ((source (get-buffer-create "*context-panels-test-reveal-source*"))
+        revealed)
+    (unwind-protect
+        (progn
+          (delete-other-windows)
+          (switch-to-buffer source)
+          (erase-buffer)
+          (insert "one\ntwo\nthree\n")
+          (let ((start (progn (goto-char (point-min)) (forward-line 1) (point)))
+                (end (progn (end-of-line) (point))))
+            (context-panels-mode 1)
+            (context-panels-register-provider
+             (list :name 'test
+                   :side-panel-buffer-name "*context-panels-test-reveal-panel*"
+                   :collect-side-items
+                   (lambda (_source)
+                     (list (list :id 'two :label "two" :source-start start :source-end end)))
+                   :render-side-item
+                   (lambda (_source item)
+                     (insert (plist-get item :label) "\n"))))
+            (let ((panel-buffer (context-panels-open source)))
+              (goto-char start)
+              (cl-letf (((symbol-function 'pos-visible-in-window-p)
+                         (lambda (&rest _args) nil))
+                        ((symbol-function 'scroll-up-command)
+                         (lambda (&optional _arg)
+                           (setq revealed t))))
+                (context-panels-update-active-highlights source))
+              (should revealed))))
+      (when (get-buffer "*context-panels-test-reveal-panel*")
+        (kill-buffer "*context-panels-test-reveal-panel*"))
+      (when (buffer-live-p source)
+        (kill-buffer source))
+      (delete-other-windows))))
+
+(ert-deftest context-panels-highlights-source-from-side-point ()
+  "Side-panel point activates the targeted source range without jumping."
+  (let ((source (get-buffer-create "*context-panels-test-side-active-source*")))
+    (unwind-protect
+        (progn
+          (delete-other-windows)
+          (switch-to-buffer source)
+          (erase-buffer)
+          (insert "one\ntwo\nthree\n")
+          (let ((start (progn (goto-char (point-min)) (forward-line 1) (point)))
+                (end (progn (end-of-line) (point))))
+            (context-panels-mode 1)
+            (context-panels-register-provider
+             (list :name 'test
+                   :side-panel-buffer-name "*context-panels-test-side-active-panel*"
+                   :active-source-face 'isearch
+                   :active-side-face 'region
+                   :collect-side-items
+                   (lambda (_source)
+                     (list (list :id 'two :label "two" :source-start start :source-end end)))
+                   :render-side-item
+                   (lambda (_source item)
+                     (insert (plist-get item :label) "\n"))))
+            (let ((panel-buffer (context-panels-open source)))
+              (goto-char (point-min))
+              (select-window (get-buffer-window panel-buffer t))
+              (goto-char (point-min))
+              (goto-char (or (next-single-property-change
+                              (point) 'context-panels-item nil (point-max))
+                             (point)))
+              (context-panels-update-active-highlights source)
+              (with-current-buffer source
+                (should (= (point-min) (point)))
+                (should (= 1 (length context-panels-active-source-overlays)))
+                (should (eq 'isearch (overlay-get (car context-panels-active-source-overlays) 'face))))
+              (with-current-buffer panel-buffer
+                (should (= 1 (length context-panels-active-side-overlays)))
+                (should (eq 'region (overlay-get (car context-panels-active-side-overlays) 'face)))))))
+      (when (get-buffer "*context-panels-test-side-active-panel*")
+        (kill-buffer "*context-panels-test-side-active-panel*"))
+      (when (buffer-live-p source)
+        (kill-buffer source))
+      (delete-other-windows))))
+
 (ert-deftest context-panels-open-falls-back-when-side-window-display-fails ()
   "Opening a context panel falls back instead of returning an invisible buffer."
   (let ((source (get-buffer-create "*context-panels-test-fallback-source*")))
