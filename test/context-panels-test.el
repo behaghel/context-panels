@@ -75,6 +75,45 @@
         (kill-buffer source)))))
 
 
+(ert-deftest context-panels-side-panel-refreshes-when-source-window-scrolls ()
+  "Visible side-panel rows follow the source window viewport."
+  (let ((source (get-buffer-create "*context-panels-test-scroll-source*")))
+    (unwind-protect
+        (progn
+          (delete-other-windows)
+          (switch-to-buffer source)
+          (erase-buffer)
+          (dotimes (idx 30)
+            (insert (format "line-%02d\n" (1+ idx))))
+          (goto-char (point-min))
+          (forward-line 11)
+          (let ((anchor (point)))
+            (context-panels-mode 1)
+            (context-panels-register-provider
+             (list :name 'test
+                   :side-panel-buffer-name "*context-panels-test-scroll-panel*"
+                   :collect-side-items
+                   (lambda (_source)
+                     (list (list :id 'line-12
+                                 :label "line-12"
+                                 :anchor-pos anchor)))
+                   :render-side-item
+                   (lambda (_source item)
+                     (insert (plist-get item :label) "\n"))))
+            (let* ((source-window (selected-window))
+                   (panel-buffer (context-panels-open source)))
+              (goto-char (point-min))
+              (forward-line 9)
+              (set-window-start source-window (point) t)
+              (context-panels--refresh-side-panel-for-source-window source-window)
+              (with-current-buffer panel-buffer
+                (should (string-prefix-p "\n\nline-12\n" (buffer-string)))))))
+      (when (get-buffer "*context-panels-test-scroll-panel*")
+        (kill-buffer "*context-panels-test-scroll-panel*"))
+      (when (buffer-live-p source)
+        (kill-buffer source))
+      (delete-other-windows))))
+
 (ert-deftest context-panels-open-falls-back-when-side-window-display-fails ()
   "Opening a context panel falls back instead of returning an invisible buffer."
   (let ((source (get-buffer-create "*context-panels-test-fallback-source*")))

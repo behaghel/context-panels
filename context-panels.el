@@ -106,6 +106,9 @@ file is an auxiliary sidecar or generated artifact rather than a source file.")
 (defvar context-panels--reconcile-timer nil
   "Idle timer used to debounce context-panel window reconciliation.")
 
+(defvar context-panels--viewport-refresh-timer nil
+  "Idle timer used to debounce side-panel viewport refreshes.")
+
 (defvar context-panels--repairing-window nil
   "Non-nil while restoring a protected context-panel window.")
 
@@ -567,6 +570,46 @@ their panel buffer."
 (add-hook 'window-buffer-change-functions
 	  #'context-panels--window-buffer-changed)
 
+(defun context-panels--refresh-side-panel-for-source-window (window &rest _args)
+  "Refresh visible side panel for SOURCE WINDOW's current viewport."
+  (when (and (context-panels--ordinary-source-window-p window)
+	     (or context-panels--desired-side-panel-p
+		 (context-panels--visible-side-panel-window)))
+    (let* ((source-buffer (window-buffer window))
+	   (panel-buffer (buffer-local-value
+			  'context-panels-side-panel-buffer source-buffer))
+	   (panel-window (and (buffer-live-p panel-buffer)
+			      (get-buffer-window panel-buffer t))))
+      (when (and (window-live-p panel-window)
+		 (context-panels--panel-window-for-source-p
+		  panel-window source-buffer))
+	(set-window-parameter window 'context-panels-last-window-start
+			      (window-start window))
+	(with-current-buffer panel-buffer
+	  (context-panels-render-side-panel source-buffer window))))))
+
+(defun context-panels--refresh-scrolled-source-windows ()
+  "Refresh side panels whose source windows have changed viewport."
+  (dolist (window (window-list nil 'no-minibuf))
+    (when (and (context-panels--ordinary-source-window-p window)
+	       (not (equal (window-parameter
+			    window 'context-panels-last-window-start)
+			   (window-start window))))
+      (context-panels--refresh-side-panel-for-source-window window))))
+
+(defun context-panels--schedule-viewport-refresh (&rest _args)
+  "Schedule a side-panel refresh after source viewport changes."
+  (unless (timerp context-panels--viewport-refresh-timer)
+    (setq context-panels--viewport-refresh-timer
+	  (run-with-idle-timer
+	   0 nil
+	   (lambda ()
+	     (setq context-panels--viewport-refresh-timer nil)
+	     (context-panels--refresh-scrolled-source-windows))))))
+
+(add-hook 'window-scroll-functions
+	  #'context-panels--schedule-viewport-refresh)
+
 (defun context-panels--render-composed-side-panel (source-buffer items providers)
   "Render merged provider ITEMS for SOURCE-BUFFER using PROVIDERS."
   (dolist (item (context-panels--sort-items items providers))
@@ -999,6 +1042,9 @@ editable prompt point that reconciliation must not disturb."
 	  (progn
 	    (when-let* ((source (context-panels--selected-source-buffer)))
 	      (setq context-panels--last-source-buffer source))
+	    (when (or context-panels--desired-side-panel-p
+		      (context-panels--visible-side-panel-window))
+	      (context-panels--refresh-scrolled-source-windows))
 	    (when (or context-panels--desired-side-panel-p
 		      context-panels--desired-bottom-view-id
 		      (context-panels--visible-side-panel-window)
