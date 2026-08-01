@@ -24,5 +24,79 @@
           (should (= (overlay-start overlay) (point-min)))
         (delete-overlay overlay)))))
 
+(ert-deftest context-panels-open-displays-visible-side-window ()
+  "Opening a context panel leaves the panel buffer visible."
+  (let ((source (get-buffer-create "*context-panels-test-source*")))
+    (unwind-protect
+        (progn
+          (switch-to-buffer source)
+          (erase-buffer)
+          (insert "source\n")
+          (context-panels-mode 1)
+          (context-panels-register-provider
+           (list :name 'test
+                 :side-panel-buffer-name "*context-panels-test-panel*"
+                 :collect-side-items (lambda (_source) nil)))
+          (let ((panel-buffer (context-panels-open source)))
+            (should (buffer-live-p panel-buffer))
+            (should (get-buffer-window panel-buffer (selected-frame)))))
+      (when (get-buffer "*context-panels-test-panel*")
+        (kill-buffer "*context-panels-test-panel*"))
+      (when (buffer-live-p source)
+        (kill-buffer source)))))
+
+(ert-deftest context-panels-open-aligns-items-to-source-viewport-rows ()
+  "Composable side-panel items are padded to their source viewport rows."
+  (let ((source (get-buffer-create "*context-panels-test-align-source*")))
+    (unwind-protect
+        (progn
+          (switch-to-buffer source)
+          (erase-buffer)
+          (insert "one\ntwo\nthree\nfour\n")
+          (goto-char (point-min))
+          (forward-line 2)
+          (let ((anchor (point)))
+            (context-panels-mode 1)
+            (context-panels-register-provider
+             (list :name 'test
+                   :side-panel-buffer-name "*context-panels-test-align-panel*"
+                   :collect-side-items
+                   (lambda (_source)
+                     (list (list :id 'three :label "three" :anchor-pos anchor)))
+                   :render-side-item
+                   (lambda (_source item)
+                     (insert (plist-get item :label) "\n"))))
+            (let ((panel-buffer (context-panels-open source)))
+              (with-current-buffer panel-buffer
+                (should (string-prefix-p "\n\nthree\n" (buffer-string)))))))
+      (when (get-buffer "*context-panels-test-align-panel*")
+        (kill-buffer "*context-panels-test-align-panel*"))
+      (when (buffer-live-p source)
+        (kill-buffer source)))))
+
+
+(ert-deftest context-panels-open-falls-back-when-side-window-display-fails ()
+  "Opening a context panel falls back instead of returning an invisible buffer."
+  (let ((source (get-buffer-create "*context-panels-test-fallback-source*")))
+    (unwind-protect
+        (progn
+          (switch-to-buffer source)
+          (erase-buffer)
+          (insert "source\n")
+          (context-panels-mode 1)
+          (context-panels-register-provider
+           (list :name 'test
+                 :side-panel-buffer-name "*context-panels-test-fallback-panel*"
+                 :collect-side-items (lambda (_source) nil)))
+          (cl-letf (((symbol-function 'display-buffer-in-side-window)
+                     (lambda (&rest _args) nil)))
+            (let ((panel-buffer (context-panels-open source)))
+              (should (buffer-live-p panel-buffer))
+              (should (get-buffer-window panel-buffer (selected-frame))))))
+      (when (get-buffer "*context-panels-test-fallback-panel*")
+        (kill-buffer "*context-panels-test-fallback-panel*"))
+      (when (buffer-live-p source)
+        (kill-buffer source)))))
+
 (provide 'context-panels-test)
 ;;; context-panels-test.el ends here

@@ -572,7 +572,7 @@ their panel buffer."
   (dolist (item (context-panels--sort-items items providers))
     (when-let* ((provider (context-panels--item-provider item providers))
 		(function (plist-get provider :render-side-item)))
-      (when (plist-get item :logical-anchor-line)
+      (when (plist-get item :anchor-line)
 	(context-panels--pad-to-viewport-row
 	 (plist-get item :anchor-line)))
       (let ((start (point)))
@@ -609,14 +609,60 @@ visible viewport rows."
 	(context-panels--render-provider-side-panels source-buffer items providers))
       (when (= (buffer-size) 0)
 	(context-panels--default-render-side-panel source-buffer items))
+      (goto-char (point-min))
       (goto-char (point-min)))))
+
+(defun context-panels--split-side-panel-window (panel-buffer source-window width)
+  "Display PANEL-BUFFER next to SOURCE-WINDOW with WIDTH as a fallback."
+  (let ((window (or (and (window-live-p source-window)
+                         (ignore-errors
+                           (split-window source-window (- width) 'right)))
+                    (display-buffer-pop-up-window panel-buffer nil))))
+    (unless (window-live-p window)
+      (error "Unable to display context panel"))
+    (set-window-buffer window panel-buffer)
+    (set-window-parameter window 'no-other-window t)
+    (set-window-parameter window 'no-delete-other-windows t)
+    window))
+
+(defun context-panels--display-side-panel-window
+    (panel-buffer source-buffer source-window width)
+  "Display PANEL-BUFFER as a visible side panel for SOURCE-BUFFER."
+  (let* ((source-frame (and (window-live-p source-window)
+                            (window-frame source-window)))
+         (panel-window
+          (when (window-live-p source-window)
+            (with-selected-window source-window
+              (display-buffer-in-side-window
+               panel-buffer
+               `((side . right)
+                 (slot . 1)
+                 (window-width . ,width)
+                 (window-parameters
+                  . ((no-other-window . t)
+                     (no-delete-other-windows . t)))))))))
+    (unless (and (window-live-p panel-window)
+                 (or (not source-frame)
+                     (eq (window-frame panel-window) source-frame)))
+      (setq panel-window
+            (context-panels--split-side-panel-window
+             panel-buffer source-window width)))
+    (context-panels-protect-window panel-window panel-buffer source-buffer)
+    panel-window))
+
+(defun context-panels--source-window (source-buffer)
+  "Return the preferred live window showing SOURCE-BUFFER."
+  (or (and (eq (window-buffer (selected-window)) source-buffer)
+           (selected-window))
+      (get-buffer-window source-buffer (selected-frame))
+      (get-buffer-window source-buffer t)))
 
 ;;;###autoload
 (defun context-panels-open (&optional source-buffer)
   "Open or refresh a generic side context panel for SOURCE-BUFFER."
   (interactive)
   (let* ((source (or source-buffer (context-panels--source-buffer)))
-	 (source-window (get-buffer-window source))
+	 (source-window (context-panels--source-window source))
 	 (buffer-name (context-panels--side-panel-buffer-name source))
 	 (width (context-panels--side-panel-width source))
 	 (panel-buffer (get-buffer-create buffer-name)))
@@ -631,15 +677,8 @@ visible viewport rows."
       (context-panels-render-side-panel source source-window))
     (with-current-buffer source
       (setq context-panels-side-panel-buffer panel-buffer))
-    (let ((panel-window (display-buffer-in-side-window
-			 panel-buffer
-			 `((side . right)
-			   (slot . 1)
-			   (window-width . ,width)
-			   (window-parameters
-			    . ((no-other-window . t)
-			       (no-delete-other-windows . t)))))))
-      (context-panels-protect-window panel-window panel-buffer source)
+    (let ((panel-window (context-panels--display-side-panel-window
+                         panel-buffer source source-window width)))
       (setq context-panels--desired-side-panel-p t)
       (setq context-panels--last-source-buffer source)
       (setq context-panels--temporarily-hidden-p nil)
