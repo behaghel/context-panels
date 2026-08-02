@@ -40,6 +40,40 @@ Reusable Emacs context-panel primitives for source buffers.
 
 Provider plists may use the same protocol keys as the original `org-context-panel` extraction, including `:name`, `:collect-side-items`, `:render-side-panel`, `:render-side-item`, `:jump-side-item`, `:collect-top-markers`, `:collect-bottom-views`, `:refresh-source-overlays`, `:cleanup-source-overlays`, `:follow-source-p`, `:side-panel-mode`, `:side-panel-buffer-name`, and `:side-panel-width`.
 
+## Bottom views
+
+Providers may expose one or more bottom views with `:collect-bottom-views`.  A bottom view is a plist with:
+
+| Key | Meaning |
+|-----|---------|
+| `:id` | Provider-local view id. |
+| `:label` | Human-readable label used by selection commands. |
+| `:buffer-name` | Optional explicit buffer name. Defaults to `*Context View: provider/id*`. |
+| `:height` | Optional side-window height. Defaults to `context-panels-bottom-height`. |
+| `:mode` | Optional major mode enabled in the view buffer. |
+| `:render` | Function `(SOURCE-BUFFER VIEW)` that inserts the view contents. |
+| `:select` | Non-nil means opening this view selects its window. |
+
+Bottom views are opened explicitly; plain `context-panels-open` remains side-panel-only for compatibility.
+
+```elisp
+(context-panels-open-bottom-view 'inspect)
+(context-panels-next-bottom-view)
+(context-panels-select-bottom-view)
+(context-panels-focus-bottom-view)
+(context-panels-close-bottom-view)
+```
+
+Each provider/view gets its own buffer, while one bottom window is visible by default.  Cycling or selecting another view swaps the visible bottom-window buffer and leaves the other view buffers available for reuse.
+
+## Key hints
+
+Use `context-panels-propertize-key` to highlight embedded command keys in labels or action text.  It applies `context-panels-key-hint-face` to the first matching key string:
+
+```elisp
+(insert (context-panels-propertize-key "B-roll" "B"))
+```
+
 ### Native active highlighting
 
 When a side panel is visible, `context-panels` highlights the active mapping between source and side panel:

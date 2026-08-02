@@ -235,6 +235,185 @@
         (kill-buffer source))
       (delete-other-windows))))
 
+(ert-deftest context-panels-open-default-does-not-open-bottom-view ()
+  "Default `context-panels-open' remains side-panel-only."
+  (let ((source (get-buffer-create "*context-panels-test-bottom-default-source*")))
+    (unwind-protect
+        (progn
+          (delete-other-windows)
+          (switch-to-buffer source)
+          (erase-buffer)
+          (insert "source\n")
+          (context-panels-mode 1)
+          (context-panels-register-provider
+           (list :name 'test
+                 :side-panel-buffer-name "*context-panels-test-bottom-default-side*"
+                 :collect-side-items (lambda (_source) nil)
+                 :collect-bottom-views
+                 (lambda (_source)
+                   (list (list :id 'inspect
+                               :label "Inspect"
+                               :render (lambda (_source _view)
+                                         (insert "bottom")))))))
+          (context-panels-open source)
+          (should (get-buffer-window "*context-panels-test-bottom-default-side*" t))
+          (should-not (context-panels--visible-bottom-panel-window)))
+      (dolist (name '("*context-panels-test-bottom-default-side*"
+                      "*Context View: test/inspect*"))
+        (when (get-buffer name)
+          (kill-buffer name)))
+      (when (buffer-live-p source)
+        (kill-buffer source))
+      (delete-other-windows))))
+
+(ert-deftest context-panels-open-bottom-view-uses-per-view-buffer ()
+  "Bottom views get provider/view-specific buffers when no buffer name is given."
+  (let ((source (get-buffer-create "*context-panels-test-bottom-source*")))
+    (unwind-protect
+        (progn
+          (delete-other-windows)
+          (switch-to-buffer source)
+          (erase-buffer)
+          (insert "source\n")
+          (context-panels-mode 1)
+          (context-panels-register-provider
+           (list :name 'test
+                 :collect-bottom-views
+                 (lambda (_source)
+                   (list (list :id 'inspect
+                               :label "Inspect"
+                               :render (lambda (_source _view)
+                                         (insert "inspector")))))))
+          (let ((panel-buffer (context-panels-open-bottom-view 'inspect source)))
+            (should (equal (buffer-name panel-buffer) "*Context View: test/inspect*"))
+            (should (get-buffer-window panel-buffer t))
+            (with-current-buffer panel-buffer
+              (should (eq context-panels-source-buffer source))
+              (should (eq context-panels-view-id 'inspect))
+              (should (equal (string-trim (buffer-string)) "inspector")))))
+      (when (get-buffer "*Context View: test/inspect*")
+        (kill-buffer "*Context View: test/inspect*"))
+      (when (buffer-live-p source)
+        (kill-buffer source))
+      (delete-other-windows))))
+
+(ert-deftest context-panels-next-bottom-view-cycles-visible-view ()
+  "Cycling switches the visible bottom window to the next bottom view."
+  (let ((source (get-buffer-create "*context-panels-test-bottom-cycle-source*")))
+    (unwind-protect
+        (progn
+          (delete-other-windows)
+          (switch-to-buffer source)
+          (erase-buffer)
+          (insert "source\n")
+          (context-panels-mode 1)
+          (context-panels-register-provider
+           (list :name 'test
+                 :collect-bottom-views
+                 (lambda (_source)
+                   (list (list :id 'one :label "One"
+                               :render (lambda (_source _view) (insert "one")))
+                         (list :id 'two :label "Two"
+                               :render (lambda (_source _view) (insert "two")))))))
+          (let ((first (context-panels-open-bottom-view 'one source)))
+            (should (get-buffer-window first t))
+            (let ((second (context-panels-next-bottom-view source)))
+              (should (equal (buffer-name second) "*Context View: test/two*"))
+              (should (get-buffer-window second t))
+              (should-not (get-buffer-window first t))
+              (with-current-buffer second
+                (should (equal (string-trim (buffer-string)) "two"))))))
+      (dolist (name '("*Context View: test/one*" "*Context View: test/two*"))
+        (when (get-buffer name)
+          (kill-buffer name)))
+      (when (buffer-live-p source)
+        (kill-buffer source))
+      (delete-other-windows))))
+
+(ert-deftest context-panels-select-bottom-view-uses-completing-read ()
+  "Selecting a bottom view opens the chosen provider/view buffer."
+  (let ((source (get-buffer-create "*context-panels-test-bottom-select-source*")))
+    (unwind-protect
+        (progn
+          (delete-other-windows)
+          (switch-to-buffer source)
+          (erase-buffer)
+          (insert "source\n")
+          (context-panels-mode 1)
+          (context-panels-register-provider
+           (list :name 'test
+                 :collect-bottom-views
+                 (lambda (_source)
+                   (list (list :id 'one :label "One"
+                               :render (lambda (_source _view) (insert "one")))
+                         (list :id 'two :label "Two"
+                               :render (lambda (_source _view) (insert "two")))
+                         (list :id 'three :label "Three"
+                               :render (lambda (_source _view) (insert "three")))))))
+          (cl-letf (((symbol-function 'completing-read)
+                     (lambda (_prompt collection &rest _args)
+                       (should (member "Three" collection))
+                       "Three")))
+            (let ((panel-buffer (context-panels-select-bottom-view source)))
+              (should (equal (buffer-name panel-buffer) "*Context View: test/three*"))
+              (with-current-buffer panel-buffer
+                (should (equal (string-trim (buffer-string)) "three"))))))
+      (dolist (name '("*Context View: test/one*"
+                      "*Context View: test/two*"
+                      "*Context View: test/three*"))
+        (when (get-buffer name)
+          (kill-buffer name)))
+      (when (buffer-live-p source)
+        (kill-buffer source))
+      (delete-other-windows))))
+
+(ert-deftest context-panels-bottom-view-ids-are-provider-local ()
+  "Provider/view keys distinguish bottom views that share the same local id."
+  (let ((source (get-buffer-create "*context-panels-test-bottom-local-source*")))
+    (unwind-protect
+        (progn
+          (delete-other-windows)
+          (switch-to-buffer source)
+          (erase-buffer)
+          (insert "source\n")
+          (context-panels-mode 1)
+          (context-panels-register-provider
+           (list :name 'alpha
+                 :collect-bottom-views
+                 (lambda (_source)
+                   (list (list :id 'inspect :label "Alpha"
+                               :render (lambda (_source _view)
+                                         (insert "alpha")))))))
+          (context-panels-register-provider
+           (list :name 'beta
+                 :collect-bottom-views
+                 (lambda (_source)
+                   (list (list :id 'inspect :label "Beta"
+                               :render (lambda (_source _view)
+                                         (insert "beta")))))))
+          (cl-letf (((symbol-function 'completing-read)
+                     (lambda (_prompt collection &rest _args)
+                       (should (member "Beta" collection))
+                       "Beta")))
+            (let ((panel-buffer (context-panels-select-bottom-view source)))
+              (should (equal (buffer-name panel-buffer) "*Context View: beta/inspect*"))
+              (with-current-buffer panel-buffer
+                (should (equal (string-trim (buffer-string)) "beta"))))))
+      (dolist (name '("*Context View: alpha/inspect*"
+                      "*Context View: beta/inspect*"))
+        (when (get-buffer name)
+          (kill-buffer name)))
+      (when (buffer-live-p source)
+        (kill-buffer source))
+      (delete-other-windows))))
+
+(ert-deftest context-panels-propertize-key-adds-key-hint-face ()
+  "Key-label helper highlights the featured key in a label."
+  (let* ((label (context-panels-propertize-key "B-roll" "B"))
+         (face (get-text-property 0 'face label)))
+    (should (equal (substring-no-properties label) "B-roll"))
+    (should (eq face 'context-panels-key-hint-face))))
+
 (ert-deftest context-panels-open-falls-back-when-side-window-display-fails ()
   "Opening a context panel falls back instead of returning an invisible buffer."
   (let ((source (get-buffer-create "*context-panels-test-fallback-source*")))
