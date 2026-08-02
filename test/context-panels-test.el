@@ -297,6 +297,34 @@
         (kill-buffer source))
       (delete-other-windows))))
 
+(ert-deftest context-panels-bottom-view-height-uses-provider-maximum ()
+  "Bottom window height uses max requested height across active views."
+  (let ((source (get-buffer-create "*context-panels-test-bottom-height-source*")))
+    (unwind-protect
+        (progn
+          (delete-other-windows)
+          (switch-to-buffer source)
+          (erase-buffer)
+          (insert "source\n")
+          (context-panels-mode 1)
+          (context-panels-register-provider
+           (list :name 'test
+                 :collect-bottom-views
+                 (lambda (_source)
+                   (list (list :id 'short :label "Short" :height 4
+                               :render (lambda (_source _view) (insert "short")))
+                         (list :id 'tall :label "Tall" :height 13
+                               :render (lambda (_source _view) (insert "tall")))))))
+          (let* ((panel-buffer (context-panels-open-bottom-view 'short source))
+                 (window (get-buffer-window panel-buffer t)))
+            (should (= 13 (window-total-height window)))))
+      (dolist (name '("*Context View: test/short*" "*Context View: test/tall*"))
+        (when (get-buffer name)
+          (kill-buffer name)))
+      (when (buffer-live-p source)
+        (kill-buffer source))
+      (delete-other-windows))))
+
 (ert-deftest context-panels-next-bottom-view-cycles-visible-view ()
   "Cycling switches the visible bottom window to the next bottom view."
   (let ((source (get-buffer-create "*context-panels-test-bottom-cycle-source*")))

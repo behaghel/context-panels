@@ -1068,6 +1068,16 @@ VIEW-ID may be a provider-local `:id' when unique, or a provider/view key of
                 (plist-get view :provider)
                 (plist-get view :id)))))
 
+(defun context-panels--bottom-view-height (source-buffer)
+  "Return bottom window height for SOURCE-BUFFER.
+The height is the maximum requested by all active bottom views, so cycling views
+keeps a stable bottom window size."
+  (let ((heights (delq nil
+                       (mapcar (lambda (view) (plist-get view :height))
+                               (context-panels--bottom-view-descriptors
+                                source-buffer)))))
+    (apply #'max context-panels-bottom-height heights)))
+
 (defun context-panels--bottom-view-mode (view)
   "Enable VIEW's buffer mode, or the generic context-panel buffer mode."
   (let ((mode (plist-get view :mode)))
@@ -1391,8 +1401,7 @@ When SELECT is non-nil, select the bottom view window after rendering."
 	 (view (or (context-panels-bottom-view view-id source)
 		   (user-error "No context bottom view: %s" view-id)))
 	 (buffer-name (context-panels--bottom-view-buffer-name view))
-	 (height (or (plist-get view :height)
-		     context-panels-bottom-height))
+	 (height (context-panels--bottom-view-height source))
 	 (panel-buffer (get-buffer-create buffer-name)))
     (when-let* ((window (context-panels--visible-bottom-panel-window)))
       (unless (eq (window-buffer window) panel-buffer)
