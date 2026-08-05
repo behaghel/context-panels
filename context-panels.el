@@ -258,7 +258,8 @@ copied and annotated with its provider name in `:provider'."
       (dolist (provider context-panels-providers)
 	(when-let* ((function (plist-get provider :collect-side-items)))
 	  (dolist (item (funcall function buffer))
-	    (push (context-panels--item-with-provider item provider) items)))))
+            (unless (context-panels-item-hidden-p item)
+              (push (context-panels--item-with-provider item provider) items))))))
     (nreverse items)))
 
 (defun context-panels-item-anchor-position (item)
@@ -271,6 +272,13 @@ copied and annotated with its provider name in `:provider'."
 (defun context-panels-position-hidden-p (position)
   "Return non-nil when POSITION is hidden by text invisibility."
   (and position (invisible-p position)))
+
+(defun context-panels-item-hidden-p (item)
+  "Return non-nil when ITEM's source anchor is hidden by folding.
+Items without source position metadata are never hidden here; providers may keep
+using them for global rows."
+  (when-let* ((position (context-panels-item-anchor-position item)))
+    (context-panels-position-hidden-p position)))
 
 (defun context-panels-position-row (position window)
   "Return visible row for POSITION in WINDOW, or nil.
@@ -512,12 +520,20 @@ source-range face."
 
 (defun context-panels--active-source-range (source-buffer item provider)
   "Return active source range for ITEM in SOURCE-BUFFER.
-Provider `:active-source-range' overrides generic item metadata.  Anchor-only
-items expand to their logical source line."
+Provider `:active-source-range' overrides generic item metadata.  Item property
+`:active-source-range' may be nil to opt out, a cons cell, or a function called
+with SOURCE-BUFFER and ITEM.  Anchor-only items expand to their logical source
+line."
   (with-current-buffer source-buffer
-    (let ((range (when-let* ((function (plist-get provider :active-source-range)))
-                   (funcall function source-buffer item))))
-      (unless range
+    (let ((range (cond
+                  ((plist-member item :active-source-range)
+                   (let ((value (plist-get item :active-source-range)))
+                     (cond
+                      ((functionp value) (funcall value source-buffer item))
+                      (t value))))
+                  ((when-let* ((function (plist-get provider :active-source-range)))
+                     (funcall function source-buffer item))))))
+      (unless (or range (plist-member item :active-source-range))
         (let ((start (or (plist-get item :source-start)
                          (plist-get item :anchor-pos)
                          (context-panels-item-anchor-position item)))

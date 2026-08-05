@@ -45,6 +45,34 @@
       (when (buffer-live-p source)
         (kill-buffer source)))))
 
+(ert-deftest context-panels-collect-side-items-hides-folded-anchors ()
+  "Collected side items exclude anchors hidden by source folding."
+  (with-temp-buffer
+    (insert "one\ntwo\nthree\n")
+    (let ((hidden-anchor (progn (goto-char (point-min))
+                                (forward-line 1)
+                                (point)))
+          (visible-anchor (progn (forward-line 1) (point))))
+      (add-to-invisibility-spec '(context-panels-test-fold . t))
+      (let ((overlay (make-overlay hidden-anchor visible-anchor)))
+        (unwind-protect
+            (progn
+              (overlay-put overlay 'invisible 'context-panels-test-fold)
+              (context-panels-mode 1)
+              (context-panels-register-provider
+               (list :name 'test
+                     :collect-side-items
+                     (lambda (_source)
+                       (list (list :id 'hidden :label "hidden"
+                                   :anchor-pos hidden-anchor)
+                             (list :id 'visible :label "visible"
+                                   :anchor-pos visible-anchor)))))
+              (should (equal (mapcar (lambda (item) (plist-get item :id))
+                                     (context-panels-collect-side-items))
+                             '(visible))))
+          (delete-overlay overlay)
+          (remove-from-invisibility-spec '(context-panels-test-fold . t)))))))
+
 (ert-deftest context-panels-open-aligns-items-to-source-viewport-rows ()
   "Composable side-panel items are padded to their source viewport rows."
   (let ((source (get-buffer-create "*context-panels-test-align-source*")))
@@ -190,6 +218,27 @@
       (when (buffer-live-p source)
         (kill-buffer source))
       (delete-other-windows))))
+
+(ert-deftest context-panels-item-active-source-range-nil-disables-source-highlight ()
+  "Items can opt out of source highlighting while keeping side-panel activity."
+  (with-temp-buffer
+    (insert "one\ntwo\n")
+    (let ((anchor (point-min)))
+      (context-panels-mode 1)
+      (context-panels-register-provider
+       (list :name 'test
+             :collect-side-items
+             (lambda (_source)
+               (list (list :id 'one :label "one" :anchor-pos anchor
+                           :active-source-range nil)))
+             :render-side-item
+             (lambda (_source item)
+               (insert (plist-get item :label) "\n"))))
+      (let* ((provider (context-panels-registered-provider 'test))
+             (item (car (context-panels-collect-side-items)))
+             (range (context-panels--active-source-range
+                     (current-buffer) item provider)))
+        (should-not range)))))
 
 (ert-deftest context-panels-highlights-source-from-side-point ()
   "Side-panel point activates the targeted source range without jumping."
