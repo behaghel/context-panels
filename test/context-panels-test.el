@@ -35,6 +35,7 @@
 	  (context-panels-mode 1)
 	  (context-panels-register-provider
 	   (list :name 'test
+		 :icon "🧪"
 		 :side-panel-buffer-name "*context-panels-test-panel*"
 		 :collect-side-items (lambda (_source) nil)))
 	  (let ((panel-buffer (context-panels-open source)))
@@ -61,6 +62,7 @@
 	      (context-panels-mode 1)
 	      (context-panels-register-provider
 	       (list :name 'test
+		     :icon "🧪"
 		     :collect-side-items
 		     (lambda (_source)
 		       (list (list :id 'hidden :label "hidden"
@@ -87,6 +89,7 @@
 	    (context-panels-mode 1)
 	    (context-panels-register-provider
 	     (list :name 'test
+		   :icon "🧪"
 		   :side-panel-buffer-name "*context-panels-test-align-panel*"
 		   :collect-side-items
 		   (lambda (_source)
@@ -116,6 +119,7 @@
 	    (context-panels-mode 1)
 	    (context-panels-register-provider
 	     (list :name 'test
+		   :icon "🧪"
 		   :side-panel-buffer-name "*context-panels-test-prefer-composed-panel*"
 		   :collect-side-items
 		   (lambda (_source)
@@ -149,10 +153,12 @@
 	    (context-panels-mode 1)
 	    (context-panels-register-provider
 	     (list :name 'inactive
+		   :icon "🧪"
 		   :side-panel-buffer-name "*context-panels-test-inactive-panel*"
 		   :collect-side-items (lambda (_source) nil)))
 	    (context-panels-register-provider
 	     (list :name 'active
+		   :icon "🧪"
 		   :collect-side-items
 		   (lambda (_source)
 		     (list (list :id 'three :label "three" :anchor-pos anchor)))
@@ -184,6 +190,7 @@
 	    (context-panels-mode 1)
 	    (context-panels-register-provider
 	     (list :name 'test
+		   :icon "🧪"
 		   :side-panel-buffer-name "*context-panels-test-scroll-panel*"
 		   :collect-side-items
 		   (lambda (_source)
@@ -222,6 +229,7 @@
 	    (context-panels-mode 1)
 	    (context-panels-register-provider
 	     (list :name 'test
+		   :icon "🧪"
 		   :side-panel-buffer-name "*context-panels-test-active-panel*"
 		   :active-face 'match
 		   :collect-side-items
@@ -262,6 +270,7 @@
 	    (context-panels-mode 1)
 	    (context-panels-register-provider
 	     (list :name 'test
+		   :icon "🧪"
 		   :side-panel-buffer-name "*context-panels-test-reveal-panel*"
 		   :collect-side-items
 		   (lambda (_source)
@@ -292,6 +301,7 @@
       (context-panels-mode 1)
       (context-panels-register-provider
        (list :name 'test
+	     :icon "🧪"
 	     :collect-side-items
 	     (lambda (_source)
 	       (list (list :id 'one :label "one" :anchor-pos anchor
@@ -319,6 +329,7 @@
 	    (context-panels-mode 1)
 	    (context-panels-register-provider
 	     (list :name 'test
+		   :icon "🧪"
 		   :side-panel-buffer-name "*context-panels-test-side-active-panel*"
 		   :active-source-face 'isearch
 		   :active-side-face 'region
@@ -361,6 +372,7 @@
 	  (context-panels-mode 1)
 	  (context-panels-register-provider
 	   (list :name 'test
+		 :icon "🧪"
 		 :side-panel-buffer-name "*context-panels-test-bottom-default-side*"
 		 :collect-side-items (lambda (_source) nil)
 		 :collect-bottom-views
@@ -392,6 +404,7 @@
 	  (context-panels-mode 1)
 	  (context-panels-register-provider
 	   (list :name 'test
+		 :icon "🧪"
 		 :collect-bottom-views
 		 (lambda (_source)
 		   (list (list :id 'inspect
@@ -423,6 +436,7 @@
 	  (context-panels-mode 1)
 	  (context-panels-register-provider
 	   (list :name 'test
+		 :icon "🧪"
 		 :collect-bottom-views
 		 (lambda (_source)
 		   (list (list :id 'short :label "Short" :height 4
@@ -455,6 +469,7 @@
 	  (context-panels-mode 1)
 	  (context-panels-register-provider
 	   (list :name 'test
+		 :icon "🧪"
 		 :collect-bottom-views
 		 (lambda (_source)
 		   (list (list :id 'editor :label "Editor"
@@ -496,6 +511,7 @@
 	  (context-panels-mode 1)
 	  (context-panels-register-provider
 	   (list :name 'test
+		 :icon "🧪"
 		 :collect-bottom-views
 		 (lambda (_source)
 		   (list (list :id 'one :label "One"
@@ -529,6 +545,7 @@
 	  (context-panels-mode 1)
 	  (context-panels-register-provider
 	   (list :name 'test
+		 :icon "🧪"
 		 :collect-bottom-views
 		 (lambda (_source)
 		   (list (list :id 'one :label "One"
@@ -566,6 +583,7 @@
 	  (context-panels-mode 1)
 	  (context-panels-register-provider
 	   (list :name 'alpha
+		 :icon "🧪"
 		 :collect-bottom-views
 		 (lambda (_source)
 		   (list (list :id 'inspect :label "Alpha"
@@ -573,6 +591,7 @@
 					 (insert "alpha")))))))
 	  (context-panels-register-provider
 	   (list :name 'beta
+		 :icon "🧪"
 		 :collect-bottom-views
 		 (lambda (_source)
 		   (list (list :id 'inspect :label "Beta"
@@ -607,6 +626,7 @@
 	  (context-panels-mode 1)
 	  (context-panels-register-provider
 	   (list :name 'test
+		 :icon "🧪"
 		 :side-panel-buffer-name "*context-panels-test-sync-side*"
 		 :collect-side-items
 		 (lambda (_source)
@@ -661,6 +681,7 @@
 	    (context-panels-mode 1)
 	    (context-panels-register-provider
 	     (list :name 'test
+		   :icon "🧪"
 		   :side-panel-buffer-name
 		   (format "*context-panels-test-side-%s*" (buffer-name source))
 		   :collect-side-items
@@ -724,6 +745,7 @@
 	  (context-panels-mode 1)
 	  (context-panels-register-provider
 	   (list :name 'test
+		 :icon "🧪"
 		 :side-panel-buffer-name "*context-panels-test-fallback-panel*"
 		 :collect-side-items (lambda (_source) nil)))
 	  (cl-letf (((symbol-function 'display-buffer-in-side-window)
@@ -735,6 +757,86 @@
 	(kill-buffer "*context-panels-test-fallback-panel*"))
       (when (buffer-live-p source)
 	(kill-buffer source)))))
+
+(ert-deftest context-panels-register-provider-requires-icon ()
+  "Provider registration fails fast when :icon is missing."
+  (with-temp-buffer
+    (context-panels-mode 1)
+    (should-error
+     (context-panels-register-provider
+      (list :name 'missing-icon
+	    :collect-side-items (lambda (_source) nil)))
+     :type 'error)))
+
+(ert-deftest context-panels-mode-line-counts-use-visible-viewport-total ()
+  "Mode-line counts group visible, viewport, and total items by effective icon."
+  (let ((source (get-buffer-create "*context-panels-test-count-source*")))
+    (unwind-protect
+	(progn
+	  (delete-other-windows)
+	  (switch-to-buffer source)
+	  (erase-buffer)
+	  (insert "one\ntwo\nthree\nfour\n")
+	  (let ((visible-anchor (progn (goto-char (point-min))
+				       (forward-line 1)
+				       (point)))
+		(hidden-anchor (progn (forward-line 1) (point))))
+	    (add-to-invisibility-spec '(context-panels-test-fold . t))
+	    (let ((overlay (make-overlay hidden-anchor (line-end-position))))
+	      (unwind-protect
+		  (progn
+		    (overlay-put overlay 'invisible 'context-panels-test-fold)
+		    (context-panels-mode 1)
+		    (context-panels-register-provider
+		     (list :name 'test
+			   :icon "🤖"
+			   :side-panel-buffer-name "*context-panels-test-count-panel*"
+			   :collect-side-items
+			   (lambda (_source)
+			     (list (list :id 'visible :label "visible"
+					 :icon "☁️" :anchor-pos visible-anchor)
+				   (list :id 'hidden :label "hidden"
+					 :anchor-pos hidden-anchor)))
+			   :render-side-item
+			   (lambda (_source item)
+			     (insert (plist-get item :label) "\n"))))
+		    (let ((panel-buffer (context-panels-open source)))
+		      (with-current-buffer panel-buffer
+			(should (equal (substring-no-properties
+					context-panels-mode-line-counts)
+				       "☁️1/☁️1 🤖1/☁️1 🤖1")))))
+		(delete-overlay overlay)
+		(remove-from-invisibility-spec '(context-panels-test-fold . t))))))
+      (when (get-buffer "*context-panels-test-count-panel*")
+	(kill-buffer "*context-panels-test-count-panel*"))
+      (when (buffer-live-p source)
+	(kill-buffer source))
+      (delete-other-windows))))
+
+(ert-deftest context-panels-mode-line-counts-render-empty-segments ()
+  "Empty mode-line count segments render as ∅."
+  (let ((source (get-buffer-create "*context-panels-test-empty-count-source*")))
+    (unwind-protect
+	(progn
+	  (delete-other-windows)
+	  (switch-to-buffer source)
+	  (erase-buffer)
+	  (insert "source\n")
+	  (context-panels-mode 1)
+	  (context-panels-register-provider
+	   (list :name 'test
+		 :icon "🧪"
+		 :side-panel-buffer-name "*context-panels-test-empty-count-panel*"
+		 :collect-side-items (lambda (_source) nil)))
+	  (let ((panel-buffer (context-panels-open source)))
+	    (with-current-buffer panel-buffer
+	      (should (equal (substring-no-properties context-panels-mode-line-counts)
+			     "∅/∅/∅")))))
+      (when (get-buffer "*context-panels-test-empty-count-panel*")
+	(kill-buffer "*context-panels-test-empty-count-panel*"))
+      (when (buffer-live-p source)
+	(kill-buffer source))
+      (delete-other-windows))))
 
 (provide 'context-panels-test)
 ;;; context-panels-test.el ends here

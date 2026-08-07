@@ -87,6 +87,21 @@ file is an auxiliary sidecar or generated artifact rather than a source file.")
   "Face used to highlight key hints embedded in context-panel labels."
   :group 'context-panels)
 
+(defface context-panels-mode-line-visible-face
+  '((t :inherit mode-line-emphasis))
+  "Face for rendered visible item counts in context-panel mode lines."
+  :group 'context-panels)
+
+(defface context-panels-mode-line-viewport-face
+  '((t :inherit mode-line))
+  "Face for viewport item counts in context-panel mode lines."
+  :group 'context-panels)
+
+(defface context-panels-mode-line-total-face
+  '((t :inherit shadow))
+  "Face for full-source item counts in context-panel mode lines."
+  :group 'context-panels)
+
 (defvar context-panels-mode nil
   "Non-nil when Context Panels mode is enabled.")
 
@@ -122,6 +137,9 @@ file is an auxiliary sidecar or generated artifact rather than a source file.")
 
 (defvar-local context-panels-view-key nil
   "Globally unique provider/view key rendered by the current bottom panel buffer.")
+
+(defvar-local context-panels-mode-line-counts "∅/∅/∅"
+  "Rendered visible/viewport/total side item counts for this side panel.")
 
 (defvar context-panels--following nil
   "Non-nil while `context-panels' is following selected windows.")
@@ -205,6 +223,14 @@ file is an auxiliary sidecar or generated artifact rather than a source file.")
       (error "Context panel provider is missing :name"))
     name))
 
+(defun context-panels--provider-icon (provider)
+  "Return PROVIDER's required mode-line icon, or signal an error."
+  (let ((icon (plist-get provider :icon)))
+    (unless (and (stringp icon) (not (string-empty-p icon)))
+      (error "Context panel provider %S is missing non-empty string :icon"
+	     (plist-get provider :name)))
+    icon))
+
 (defun context-panels-propertize-key (label key &optional face)
   "Return LABEL with the first occurrence of KEY highlighted.
 FACE defaults to `context-panels-key-hint-face'.  When KEY is not found, return
@@ -225,6 +251,7 @@ LABEL unchanged except for text-property copy semantics."
 PROVIDER is a plist descriptor.  Registering another provider with the same
 `:name' replaces the previous descriptor while preserving registration order."
   (let ((name (context-panels--provider-name provider)))
+    (context-panels--provider-icon provider)
     (setq context-panels-providers
 	  (append (cl-remove name context-panels-providers
 			     :key (lambda (entry) (plist-get entry :name))
@@ -254,6 +281,19 @@ PROVIDER is a plist descriptor.  Registering another provider with the same
   (let ((copy (copy-sequence item)))
     (plist-put copy :provider (plist-get provider :name))))
 
+(defun context-panels-collect-side-items-raw (&optional source-buffer)
+  "Collect raw side item descriptors for SOURCE-BUFFER.
+Unlike `context-panels-collect-side-items', this does not hide folded or
+invisible anchors.  Provider collection/filtering still applies."
+  (let ((buffer (or source-buffer (current-buffer)))
+	items)
+    (with-current-buffer buffer
+      (dolist (provider context-panels-providers)
+	(when-let* ((function (plist-get provider :collect-side-items)))
+	  (dolist (item (funcall function buffer))
+	    (push (context-panels--item-with-provider item provider) items)))))
+    (nreverse items)))
+
 (defun context-panels-collect-side-items (&optional source-buffer)
   "Collect side item descriptors for SOURCE-BUFFER.
 When SOURCE-BUFFER is nil, use the current buffer.  Each returned descriptor is
@@ -277,7 +317,10 @@ copied and annotated with its provider name in `:provider'."
 
 (defun context-panels-position-hidden-p (position)
   "Return non-nil when POSITION is hidden by text invisibility."
-  (and position (invisible-p position)))
+  (and position
+       (<= (point-min) position)
+       (<= position (point-max))
+       (invisible-p position)))
 
 (defun context-panels-item-hidden-p (item)
   "Return non-nil when ITEM's source anchor is hidden by folding.
@@ -328,6 +371,21 @@ annotated with `:anchor-line' viewport rows."
 		       (context-panels-item-with-viewport-row item row))
 		   item)))
 	     (context-panels-collect-side-items buffer))))))
+
+(defun context-panels-items-in-window-range (window &optional source-buffer)
+  "Return raw provider side items whose anchor positions fall in WINDOW.
+This count-oriented helper ignores invisibility and folding, but requires a
+source position inside `window-start' and `window-end'."
+  (when (window-live-p window)
+    (let ((buffer (or source-buffer (window-buffer window)))
+	  (start (window-start window))
+	  (end (window-end window t)))
+      (with-current-buffer buffer
+	(cl-remove-if-not
+	 (lambda (item)
+	   (when-let* ((position (context-panels-item-anchor-position item)))
+	     (and (<= start position) (< position end))))
+	 (context-panels-collect-side-items-raw buffer))))))
 
 (defun context-panels--source-buffer ()
   "Return the source buffer for context-panel commands."
@@ -503,6 +561,52 @@ When SOURCE-BUFFER is nil, infer it from the current context."
 	   :key (lambda (provider) (plist-get provider :name))
 	   :test #'eq))
 
+(defun context-panels--item-icon (item providers)
+  "Return ITEM's effective icon from item metadata or PROVIDERS."
+  (let ((icon (plist-get item :icon)))
+    (if (and (stringp icon) (not (string-empty-p icon)))
+	icon
+      (context-panels--provider-icon
+       (or (context-panels--item-provider item providers)
+	   (error "No provider for context-panel item: %S" item))))))
+
+(defun context-panels--group-counts-by-icon (items providers)
+  "Return ordered grouped count alist for ITEMS using PROVIDERS icons."
+  (let (groups order)
+    (dolist (item items)
+      (let ((icon (context-panels--item-icon item providers)))
+	(unless (assoc icon groups)
+	  (push icon order))
+	(setf (alist-get icon groups nil nil #'equal)
+	      (1+ (alist-get icon groups 0 nil #'equal)))))
+    (mapcar (lambda (icon) (cons icon (alist-get icon groups nil nil #'equal)))
+	    (nreverse order))))
+
+(defun context-panels--format-count-segment (items providers face)
+  "Format count segment for ITEMS using PROVIDERS and FACE."
+  (let ((groups (context-panels--group-counts-by-icon items providers)))
+    (propertize
+     (if groups
+	 (string-join
+	  (mapcar (lambda (group)
+		    (format "%s%s" (car group) (cdr group)))
+		  groups)
+	  " ")
+       "∅")
+     'face face)))
+
+(defun context-panels--format-mode-line-counts
+    (visible-items viewport-items total-items providers)
+  "Format mode-line counts for VISIBLE-ITEMS, VIEWPORT-ITEMS and TOTAL-ITEMS."
+  (string-join
+   (list (context-panels--format-count-segment
+	  visible-items providers 'context-panels-mode-line-visible-face)
+	 (context-panels--format-count-segment
+	  viewport-items providers 'context-panels-mode-line-viewport-face)
+	 (context-panels--format-count-segment
+	  total-items providers 'context-panels-mode-line-total-face))
+   "/"))
+
 (defun context-panels--item-display-line (item)
   "Return display line key for ITEM."
   (or (plist-get item :display-line)
@@ -572,16 +676,13 @@ line."
 		     thereis (< left-part right-part)
 		     until (/= left-part right-part))))))
 
-(defun context-panels--default-render-side-panel (source-buffer items)
-  "Render fallback side panel contents for SOURCE-BUFFER and ITEMS."
-  (insert (format "Context for: %s\n\n" (buffer-name source-buffer)))
-  (if items
-      (dolist (item items)
-	(insert (format "- %s\n" (or (plist-get item :label)
-				     (plist-get item :id)
-				     (plist-get item :provider)
-				     "item"))))
-    (insert "No visible context items.\n")))
+(defun context-panels--default-render-side-panel (_source-buffer items)
+  "Render fallback side-panel item rows for ITEMS."
+  (dolist (item items)
+    (insert (format "- %s\n" (or (plist-get item :label)
+				 (plist-get item :id)
+				 (plist-get item :provider)
+				 "item")))))
 
 (defun context-panels--side-panel-property (source-buffer property)
   "Return provider-selected side panel PROPERTY for SOURCE-BUFFER, or nil."
@@ -739,6 +840,11 @@ visible viewport rows."
   (let* ((items (if source-window
 		    (context-panels-items-for-window source-window source-buffer)
 		  (context-panels-collect-side-items source-buffer)))
+	 (viewport-items (if source-window
+			     (context-panels-items-in-window-range
+			      source-window source-buffer)
+			   (context-panels-collect-side-items-raw source-buffer)))
+	 (total-items (context-panels-collect-side-items-raw source-buffer))
 	 (providers (with-current-buffer source-buffer
 		      (context-panels-registered-providers)))
 	 (item-providers (cl-remove-if-not
@@ -749,6 +855,13 @@ visible viewport rows."
 			  (cl-every (lambda (provider)
 				      (plist-get provider :render-side-item))
 				    item-providers))))
+    (setq-local context-panels-mode-line-counts
+		(context-panels--format-mode-line-counts
+		 items viewport-items total-items providers)
+		mode-line-format
+		'("%e" mode-line-front-space context-panels-mode-line-counts
+		  mode-line-end-spaces))
+    (force-mode-line-update)
     (let ((inhibit-read-only t))
       (context-panels-clear-active-highlights source-buffer (current-buffer))
       (erase-buffer)

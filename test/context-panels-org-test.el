@@ -14,10 +14,10 @@
     (org-mode)
     (insert "#+TITLE: Example\n#+AUTHOR: Alice\n\nBody\n")
     (should (= (context-panels-org-metadata-end-position)
-               (save-excursion
-                 (goto-char (point-min))
-                 (forward-line 2)
-                 (point))))))
+	       (save-excursion
+		 (goto-char (point-min))
+		 (forward-line 2)
+		 (point))))))
 
 (ert-deftest context-panels-org-install-defaults-uses-org-predicate ()
   "Org defaults restrict source detection to Org buffers."
