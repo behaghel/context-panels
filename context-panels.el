@@ -111,6 +111,12 @@ file is an auxiliary sidecar or generated artifact rather than a source file.")
 (defvar-local context-panels-bottom-panel-buffer nil
   "Bottom view buffer associated with the current source buffer.")
 
+(defvar-local context-panels-side-panel-desired-p nil
+  "Non-nil when this source buffer should restore its side panel on reentry.")
+
+(defvar-local context-panels-bottom-view-desired-id nil
+  "Bottom view id this source buffer should restore on reentry.")
+
 (defvar-local context-panels-view-id nil
   "Provider view id rendered by the current context-panel buffer.")
 
@@ -204,14 +210,14 @@ file is an auxiliary sidecar or generated artifact rather than a source file.")
 FACE defaults to `context-panels-key-hint-face'.  When KEY is not found, return
 LABEL unchanged except for text-property copy semantics."
   (let* ((text (copy-sequence label))
-         (case-fold-search nil)
-         (start (and (stringp key)
-                     (not (string-empty-p key))
-                     (string-match (regexp-quote key) text))))
+	 (case-fold-search nil)
+	 (start (and (stringp key)
+		     (not (string-empty-p key))
+		     (string-match (regexp-quote key) text))))
     (when start
       (add-face-text-property start (+ start (length key))
-                              (or face 'context-panels-key-hint-face)
-                              nil text))
+			      (or face 'context-panels-key-hint-face)
+			      nil text))
     text))
 
 (defun context-panels-register-provider (provider)
@@ -258,8 +264,8 @@ copied and annotated with its provider name in `:provider'."
       (dolist (provider context-panels-providers)
 	(when-let* ((function (plist-get provider :collect-side-items)))
 	  (dolist (item (funcall function buffer))
-            (unless (context-panels-item-hidden-p item)
-              (push (context-panels--item-with-provider item provider) items))))))
+	    (unless (context-panels-item-hidden-p item)
+	      (push (context-panels--item-with-provider item provider) items))))))
     (nreverse items)))
 
 (defun context-panels-item-anchor-position (item)
@@ -526,28 +532,28 @@ with SOURCE-BUFFER and ITEM.  Anchor-only items expand to their logical source
 line."
   (with-current-buffer source-buffer
     (let ((range (cond
-                  ((plist-member item :active-source-range)
-                   (let ((value (plist-get item :active-source-range)))
-                     (cond
-                      ((functionp value) (funcall value source-buffer item))
-                      (t value))))
-                  ((when-let* ((function (plist-get provider :active-source-range)))
-                     (funcall function source-buffer item))))))
+		  ((plist-member item :active-source-range)
+		   (let ((value (plist-get item :active-source-range)))
+		     (cond
+		      ((functionp value) (funcall value source-buffer item))
+		      (t value))))
+		  ((when-let* ((function (plist-get provider :active-source-range)))
+		     (funcall function source-buffer item))))))
       (unless (or range (plist-member item :active-source-range))
-        (let ((start (or (plist-get item :source-start)
-                         (plist-get item :anchor-pos)
-                         (context-panels-item-anchor-position item)))
-              (end (plist-get item :source-end)))
-          (when start
-            (setq range
-                  (if end
-                      (cons start end)
-                    (save-excursion
-                      (goto-char start)
-                      (cons (line-beginning-position)
-                            (line-end-position))))))))
+	(let ((start (or (plist-get item :source-start)
+			 (plist-get item :anchor-pos)
+			 (context-panels-item-anchor-position item)))
+	      (end (plist-get item :source-end)))
+	  (when start
+	    (setq range
+		  (if end
+		      (cons start end)
+		    (save-excursion
+		      (goto-char start)
+		      (cons (line-beginning-position)
+			    (line-end-position))))))))
       (when (and range (context-panels-valid-region-p (car range) (cdr range)))
-        range))))
+	range))))
 
 (defun context-panels--sort-items (items providers)
   "Return ITEMS sorted by viewport/source position and provider priority."
@@ -735,12 +741,14 @@ visible viewport rows."
 		  (context-panels-collect-side-items source-buffer)))
 	 (providers (with-current-buffer source-buffer
 		      (context-panels-registered-providers)))
-	 (composable (and providers
+	 (item-providers (cl-remove-if-not
+			  (lambda (provider)
+			    (context-panels--provider-items provider items))
+			  providers))
+	 (composable (and item-providers
 			  (cl-every (lambda (provider)
 				      (plist-get provider :render-side-item))
-				    providers)
-			  (or (> (length providers) 1)
-			      (not (plist-get (car providers) :render-side-panel))))))
+				    item-providers))))
     (let ((inhibit-read-only t))
       (context-panels-clear-active-highlights source-buffer (current-buffer))
       (erase-buffer)
@@ -762,14 +770,14 @@ visible viewport rows."
   "Return context items active at point in SOURCE-BUFFER."
   (with-current-buffer source-buffer
     (let ((pos (point))
-          (providers (context-panels-registered-providers))
-          active)
+	  (providers (context-panels-registered-providers))
+	  active)
       (dolist (item (context-panels-collect-side-items source-buffer))
-        (when-let* ((provider (context-panels--item-provider item providers))
-                    (range (context-panels--active-source-range
-                            source-buffer item provider)))
-          (when (and (>= pos (car range)) (< pos (max (1+ (car range)) (cdr range))))
-            (push item active))))
+	(when-let* ((provider (context-panels--item-provider item providers))
+		    (range (context-panels--active-source-range
+			    source-buffer item provider)))
+	  (when (and (>= pos (car range)) (< pos (max (1+ (car range)) (cdr range))))
+	    (push item active))))
       (nreverse active))))
 
 (defun context-panels--active-items (source-buffer)
@@ -777,14 +785,14 @@ visible viewport rows."
   (let ((selected (selected-window)))
     (cond
      ((and (window-live-p selected)
-           (eq (window-buffer selected) source-buffer))
+	   (eq (window-buffer selected) source-buffer))
       (context-panels--items-active-at-source-point source-buffer))
      ((and (window-live-p selected)
-           (with-current-buffer (window-buffer selected)
-             (eq context-panels-source-buffer source-buffer)))
+	   (with-current-buffer (window-buffer selected)
+	     (eq context-panels-source-buffer source-buffer)))
       (with-current-buffer (window-buffer selected)
-        (when-let* ((item (context-panels--active-side-item-at-point)))
-          (list item))))
+	(when-let* ((item (context-panels--active-side-item-at-point)))
+	  (list item))))
      (t
       (context-panels--items-active-at-source-point source-buffer)))))
 
@@ -809,7 +817,7 @@ visible viewport rows."
   (context-panels--clear-active-side-highlights
    (or panel-buffer
        (and (context-panels--visible-side-panel-window)
-            (window-buffer (context-panels--visible-side-panel-window))))))
+	    (window-buffer (context-panels--visible-side-panel-window))))))
 
 (defun context-panels--side-item-spans ()
   "Return list of (ITEM START END) spans in the current side panel buffer."
@@ -817,52 +825,52 @@ visible viewport rows."
     (save-excursion
       (goto-char (point-min))
       (while (< (point) (point-max))
-        (let* ((start (point))
-               (item (context-panels-item-at-position start))
-               (end (or (next-single-property-change
-                         start 'context-panels-item nil (point-max))
-                        (point-max))))
-          (when item
-            (push (list item start end) spans))
-          (goto-char (max (1+ start) end)))))
+	(let* ((start (point))
+	       (item (context-panels-item-at-position start))
+	       (end (or (next-single-property-change
+			 start 'context-panels-item nil (point-max))
+			(point-max))))
+	  (when item
+	    (push (list item start end) spans))
+	  (goto-char (max (1+ start) end)))))
     (nreverse spans)))
 
 (defun context-panels--highlight-active-source (source-buffer items providers)
   "Highlight source range for first active item in ITEMS."
   (context-panels--clear-active-source-highlights source-buffer)
   (when-let* ((item (car items))
-              (provider (context-panels--item-provider item providers))
-              (range (context-panels--active-source-range
-                      source-buffer item provider)))
+	      (provider (context-panels--item-provider item providers))
+	      (range (context-panels--active-source-range
+		      source-buffer item provider)))
     (with-current-buffer source-buffer
       (let ((overlay (context-panels-make-range-overlay
-                      (car range) (cdr range)
-                      :face (context-panels--active-face item provider nil)
-                      :properties (list 'priority 1000))))
-        (push overlay context-panels-active-source-overlays)))))
+		      (car range) (cdr range)
+		      :face (context-panels--active-face item provider nil)
+		      :properties (list 'priority 1000))))
+	(push overlay context-panels-active-source-overlays)))))
 
 (defun context-panels--highlight-active-side-items (panel-buffer items source-buffer)
   "Highlight active ITEMS in PANEL-BUFFER."
   (context-panels--clear-active-side-highlights panel-buffer)
   (when (and (buffer-live-p panel-buffer) items)
     (let* ((keys (mapcar #'context-panels-item-key items))
-           (providers (with-current-buffer source-buffer
-                        (context-panels-registered-providers))))
+	   (providers (with-current-buffer source-buffer
+			(context-panels-registered-providers))))
       (with-current-buffer panel-buffer
-        (dolist (span (context-panels--side-item-spans))
-          (pcase-let ((`(,item ,start ,end) span))
-            (when (member (context-panels-item-key item) keys)
-              (when-let* ((provider (context-panels--item-provider item providers)))
-                (let ((overlay (make-overlay start end nil t nil)))
-                  (overlay-put overlay 'face
-                               (context-panels--active-face item provider t))
-                  (push overlay context-panels-active-side-overlays))))))))))
+	(dolist (span (context-panels--side-item-spans))
+	  (pcase-let ((`(,item ,start ,end) span))
+	    (when (member (context-panels-item-key item) keys)
+	      (when-let* ((provider (context-panels--item-provider item providers)))
+		(let ((overlay (make-overlay start end nil t nil)))
+		  (overlay-put overlay 'face
+			       (context-panels--active-face item provider t))
+		  (push overlay context-panels-active-side-overlays))))))))))
 
 (defun context-panels--position-low-in-window-p (position window)
   "Return non-nil when POSITION is visible but low in WINDOW."
   (when-let* ((posn (posn-at-point position window))
-              (xy (posn-x-y posn))
-              (y (cdr xy)))
+	      (xy (posn-x-y posn))
+	      (y (cdr xy)))
     (> y (* 0.8 (window-pixel-height window)))))
 
 (defun context-panels--reveal-active-side-item (panel-window)
@@ -870,57 +878,57 @@ visible viewport rows."
 Image rows can make line-based visibility checks optimistic, so also reveal
 items that are technically visible but near the bottom of the side window."
   (when (and context-panels-reveal-active-side-item
-             (window-live-p panel-window))
+	     (window-live-p panel-window))
     (with-current-buffer (window-buffer panel-window)
       (when-let* ((overlay (car (last context-panels-active-side-overlays)))
-                  (start (overlay-start overlay)))
-        (let ((selected (selected-window))
-              (max-steps (max 1 (* 2 (window-body-height panel-window)))))
-          (unwind-protect
-              (progn
-                (select-window panel-window)
-                (set-window-point panel-window start)
-                ;; Prefer Emacs' normal conservative scrolling over recentering:
-                ;; move by one line at a time until the item is revealed.  This
-                ;; preserves as much context as possible for variable-height
-                ;; image rows.
-                (let ((steps 0)
-                      (scroll-margin 0)
-                      (scroll-conservatively most-positive-fixnum)
-                      (scroll-step 1))
-                  (while (and (< steps max-steps)
-                              (< start (window-start panel-window)))
-                    (ignore-errors (scroll-down-command 1))
-                    (setq steps (1+ steps)))
-                  (while (and (< steps max-steps)
-                              (or (not (pos-visible-in-window-p
-                                        start panel-window))
-                                  (context-panels--position-low-in-window-p
-                                   start panel-window)))
-                    (ignore-errors (scroll-up-command 1))
-                    (setq steps (1+ steps)))))
-            (when (window-live-p selected)
-              (select-window selected))))))))
+		  (start (overlay-start overlay)))
+	(let ((selected (selected-window))
+	      (max-steps (max 1 (* 2 (window-body-height panel-window)))))
+	  (unwind-protect
+	      (progn
+		(select-window panel-window)
+		(set-window-point panel-window start)
+		;; Prefer Emacs' normal conservative scrolling over recentering:
+		;; move by one line at a time until the item is revealed.  This
+		;; preserves as much context as possible for variable-height
+		;; image rows.
+		(let ((steps 0)
+		      (scroll-margin 0)
+		      (scroll-conservatively most-positive-fixnum)
+		      (scroll-step 1))
+		  (while (and (< steps max-steps)
+			      (< start (window-start panel-window)))
+		    (ignore-errors (scroll-down-command 1))
+		    (setq steps (1+ steps)))
+		  (while (and (< steps max-steps)
+			      (or (not (pos-visible-in-window-p
+					start panel-window))
+				  (context-panels--position-low-in-window-p
+				   start panel-window)))
+		    (ignore-errors (scroll-up-command 1))
+		    (setq steps (1+ steps)))))
+	    (when (window-live-p selected)
+	      (select-window selected))))))))
 
 (defun context-panels-update-active-highlights (&optional source-buffer)
   "Update native active source and side-panel highlights."
   (when-let* ((source (or source-buffer (context-panels--visible-source-buffer)))
-              (panel-window (context-panels--visible-side-panel-window)))
+	      (panel-window (context-panels--visible-side-panel-window)))
     (let* ((panel-buffer (window-buffer panel-window))
-           (items (context-panels--active-items source))
-           (providers (with-current-buffer source
-                        (context-panels-registered-providers))))
+	   (items (context-panels--active-items source))
+	   (providers (with-current-buffer source
+			(context-panels-registered-providers))))
       (context-panels--highlight-active-source source items providers)
       (context-panels--highlight-active-side-items panel-buffer items source)
       (when (eq (window-buffer (selected-window)) source)
-        (context-panels--reveal-active-side-item panel-window)))))
+	(context-panels--reveal-active-side-item panel-window)))))
 
 (defun context-panels--split-side-panel-window (panel-buffer source-window width)
   "Display PANEL-BUFFER next to SOURCE-WINDOW with WIDTH as a fallback."
   (let ((window (or (and (window-live-p source-window)
-                         (ignore-errors
-                           (split-window source-window (- width) 'right)))
-                    (display-buffer-pop-up-window panel-buffer nil))))
+			 (ignore-errors
+			   (split-window source-window (- width) 'right)))
+		    (display-buffer-pop-up-window panel-buffer nil))))
     (unless (window-live-p window)
       (error "Unable to display context panel"))
     (set-window-buffer window panel-buffer)
@@ -932,31 +940,31 @@ items that are technically visible but near the bottom of the side window."
     (panel-buffer source-buffer source-window width)
   "Display PANEL-BUFFER as a visible side panel for SOURCE-BUFFER."
   (let* ((source-frame (and (window-live-p source-window)
-                            (window-frame source-window)))
-         (panel-window
-          (when (window-live-p source-window)
-            (with-selected-window source-window
-              (display-buffer-in-side-window
-               panel-buffer
-               `((side . right)
-                 (slot . 1)
-                 (window-width . ,width)
-                 (window-parameters
-                  . ((no-other-window . t)
-                     (no-delete-other-windows . t)))))))))
+			    (window-frame source-window)))
+	 (panel-window
+	  (when (window-live-p source-window)
+	    (with-selected-window source-window
+	      (display-buffer-in-side-window
+	       panel-buffer
+	       `((side . right)
+		 (slot . 1)
+		 (window-width . ,width)
+		 (window-parameters
+		  . ((no-other-window . t)
+		     (no-delete-other-windows . t)))))))))
     (unless (and (window-live-p panel-window)
-                 (or (not source-frame)
-                     (eq (window-frame panel-window) source-frame)))
+		 (or (not source-frame)
+		     (eq (window-frame panel-window) source-frame)))
       (setq panel-window
-            (context-panels--split-side-panel-window
-             panel-buffer source-window width)))
+	    (context-panels--split-side-panel-window
+	     panel-buffer source-window width)))
     (context-panels-protect-window panel-window panel-buffer source-buffer)
     panel-window))
 
 (defun context-panels--source-window (source-buffer)
   "Return the preferred live window showing SOURCE-BUFFER."
   (or (and (eq (window-buffer (selected-window)) source-buffer)
-           (selected-window))
+	   (selected-window))
       (get-buffer-window source-buffer (selected-frame))
       (get-buffer-window source-buffer t)))
 
@@ -979,9 +987,10 @@ items that are technically visible but near the bottom of the side window."
       (setq context-panels-source-buffer source)
       (context-panels-render-side-panel source source-window))
     (with-current-buffer source
-      (setq context-panels-side-panel-buffer panel-buffer))
+      (setq context-panels-side-panel-buffer panel-buffer)
+      (setq context-panels-side-panel-desired-p t))
     (let ((panel-window (context-panels--display-side-panel-window
-                         panel-buffer source source-window width)))
+			 panel-buffer source source-window width)))
       (setq context-panels--desired-side-panel-p t)
       (setq context-panels--last-source-buffer source)
       (setq context-panels--temporarily-hidden-p nil)
@@ -1028,7 +1037,9 @@ When PRESERVE-DESIRE is non-nil, keep workspace desired-panel state."
       (bury-buffer panel-buffer)
       (when (buffer-live-p source)
 	(with-current-buffer source
-	  (setq context-panels-side-panel-buffer nil))))))
+	  (setq context-panels-side-panel-buffer nil)
+	  (unless preserve-desire
+	    (setq context-panels-side-panel-desired-p nil)))))))
 
 ;;;###autoload
 (defun context-panels-close ()
@@ -1049,10 +1060,10 @@ When PRESERVE-DESIRE is non-nil, keep workspace desired-panel state."
 	     when function append
 	     (mapcar (lambda (view)
 		       (let ((copy (copy-sequence view))
-                             (provider-name (plist-get provider :name)))
+			     (provider-name (plist-get provider :name)))
 			 (plist-put copy :provider provider-name)
-                         (plist-put copy :context-panels-view-key
-                                    (cons provider-name (plist-get view :id)))))
+			 (plist-put copy :context-panels-view-key
+				    (cons provider-name (plist-get view :id)))))
 		     (funcall function source-buffer)))))
 
 (defun context-panels--bottom-view-match-p (view-id view)
@@ -1066,32 +1077,32 @@ VIEW-ID may be a provider-local `:id' when unique, or a provider/view key of
 (PROVIDER . ID)."
   (let ((source (or source-buffer (context-panels--source-buffer))))
     (cl-find-if (lambda (view)
-                  (context-panels--bottom-view-match-p view-id view))
-                (context-panels--bottom-view-descriptors source))))
+		  (context-panels--bottom-view-match-p view-id view))
+		(context-panels--bottom-view-descriptors source))))
 
 (defun context-panels--bottom-view-label (view)
   "Return user-visible label for bottom VIEW."
   (format "%s" (or (plist-get view :label)
-                    (plist-get view :id))))
+		   (plist-get view :id))))
 
 (defun context-panels--bottom-view-buffer-name (view)
   "Return buffer name for bottom VIEW."
   (or (plist-get view :buffer-name)
       (let ((base (string-remove-suffix
-                   "*" (string-remove-prefix "*" context-panels-bottom-buffer-name))))
-        (format "*%s: %s/%s*"
-                base
-                (plist-get view :provider)
-                (plist-get view :id)))))
+		   "*" (string-remove-prefix "*" context-panels-bottom-buffer-name))))
+	(format "*%s: %s/%s*"
+		base
+		(plist-get view :provider)
+		(plist-get view :id)))))
 
 (defun context-panels--bottom-view-height (source-buffer)
   "Return bottom window height for SOURCE-BUFFER.
 The height is the maximum requested by all active bottom views, so cycling views
 keeps a stable bottom window size."
   (let ((heights (delq nil
-                       (mapcar (lambda (view) (plist-get view :height))
-                               (context-panels--bottom-view-descriptors
-                                source-buffer)))))
+		       (mapcar (lambda (view) (plist-get view :height))
+			       (context-panels--bottom-view-descriptors
+				source-buffer)))))
     (apply #'max context-panels-bottom-height heights)))
 
 (defun context-panels--bottom-view-mode (view)
@@ -1156,11 +1167,11 @@ keeps a stable bottom window size."
 			(context-panels-ignored-source-file-p buffer-file-name)))))))
 
 (defun context-panels--ordinary-source-window-p (window)
-  "Return non-nil when WINDOW shows an ordinary eligible source buffer."
+  "Return non-nil when WINDOW shows an ordinary followable source buffer."
   (and (window-live-p window)
        (not (window-minibuffer-p window))
        (not (context-panels--auxiliary-window-p window))
-       (context-panels--eligible-source-buffer-p (window-buffer window))))
+       (context-panels--followable-source-p (window-buffer window))))
 
 (defun context-panels--visible-source-window (source-buffer)
   "Return ordinary visible window for SOURCE-BUFFER, or nil."
@@ -1170,26 +1181,27 @@ keeps a stable bottom window size."
 	      (window-list nil 'no-minibuf)))
 
 (defun context-panels--selected-source-buffer ()
-  "Return selected ordinary eligible source buffer, or nil."
+  "Return selected ordinary followable source buffer, or nil."
   (when (context-panels--ordinary-source-window-p (selected-window))
     (window-buffer (selected-window))))
 
+(defun context-panels--selected-auxiliary-source-buffer ()
+  "Return the selected context panel's source buffer, or nil."
+  (when (context-panels--auxiliary-window-p (selected-window))
+    (let ((source (buffer-local-value 'context-panels-source-buffer
+				      (window-buffer (selected-window)))))
+      (and (buffer-live-p source) source))))
+
 (defun context-panels--visible-source-buffer ()
-  "Return selected or fallback visible eligible source buffer.
-When the selected window previews an ignored sidecar, keep the last live source
-instead of treating the sidecar as a new source or hiding existing panels."
+  "Return the source that should currently drive visible panels.
+The selected ordinary source wins.  Selecting a context-panel auxiliary keeps its
+source active.  Ignored sidecars may keep the last source.  Other buffers hide
+panels instead of falling back to an unrelated visible source."
   (or (context-panels--selected-source-buffer)
+      (context-panels--selected-auxiliary-source-buffer)
       (and (context-panels--selected-ignored-source-buffer-p)
 	   (buffer-live-p context-panels--last-source-buffer)
-	   context-panels--last-source-buffer)
-      (and (buffer-live-p context-panels--last-source-buffer)
-	   (context-panels--visible-source-window
-	    context-panels--last-source-buffer)
-	   context-panels--last-source-buffer)
-      (when-let* ((window (cl-find-if
-			   #'context-panels--ordinary-source-window-p
-			   (window-list nil 'no-minibuf))))
-	(window-buffer window))))
+	   context-panels--last-source-buffer)))
 
 (defun context-panels--visible-side-panel-window ()
   "Return a visible context side-panel window, or nil."
@@ -1243,22 +1255,37 @@ instead of treating the sidecar as a new source or hiding existing panels."
        (with-current-buffer (window-buffer window)
 	 (eq context-panels-source-buffer source-buffer))))
 
+(defun context-panels--source-desired-side-panel-p (source-buffer)
+  "Return non-nil when SOURCE-BUFFER wants its side panel restored."
+  (and (buffer-live-p source-buffer)
+       (buffer-local-value 'context-panels-side-panel-desired-p source-buffer)))
+
+(defun context-panels--source-desired-bottom-view-id (source-buffer)
+  "Return SOURCE-BUFFER's desired bottom view id, or nil."
+  (and (buffer-live-p source-buffer)
+       (buffer-local-value 'context-panels-bottom-view-desired-id source-buffer)))
+
+(defun context-panels--source-wants-panels-p (source-buffer)
+  "Return non-nil when SOURCE-BUFFER has panels to restore."
+  (or (context-panels--source-desired-side-panel-p source-buffer)
+      (context-panels--source-desired-bottom-view-id source-buffer)))
+
 (defun context-panels--restore-desired-panels (source-buffer)
   "Restore desired context panels for SOURCE-BUFFER.
 Do not rerender already-correct visible panels; chat buffers may have an
 editable prompt point that reconciliation must not disturb."
-  (when (and context-panels--desired-side-panel-p
-	     (not (context-panels--panel-window-for-source-p
-		   (context-panels--visible-side-panel-window) source-buffer)))
-    (context-panels-open source-buffer))
-  (when (and context-panels--desired-bottom-view-id
-	     (not (context-panels--panel-window-for-source-p
-		   (context-panels--visible-bottom-panel-window) source-buffer))
-	     (context-panels-bottom-view
-	      context-panels--desired-bottom-view-id source-buffer))
-    (context-panels-open-bottom-view
-     context-panels--desired-bottom-view-id source-buffer))
-  (context-panels--close-stale-panels source-buffer))
+  (let ((bottom-view-id
+	 (context-panels--source-desired-bottom-view-id source-buffer)))
+    (when (and (context-panels--source-desired-side-panel-p source-buffer)
+	       (not (context-panels--panel-window-for-source-p
+		     (context-panels--visible-side-panel-window) source-buffer)))
+      (context-panels-open source-buffer))
+    (when (and bottom-view-id
+	       (not (context-panels--panel-window-for-source-p
+		     (context-panels--visible-bottom-panel-window) source-buffer))
+	       (context-panels-bottom-view bottom-view-id source-buffer))
+      (context-panels-open-bottom-view bottom-view-id source-buffer))
+    (context-panels--close-stale-panels source-buffer)))
 
 (defun context-panels-reconcile-windows ()
   "Reconcile visible context panels with the current visible source."
@@ -1269,18 +1296,13 @@ editable prompt point that reconciliation must not disturb."
 	  (if-let* ((source (context-panels--visible-source-buffer)))
 	      (progn
 		(setq context-panels--last-source-buffer source)
-		(when (and context-panels--desired-side-panel-p
-			   (not context-panels--temporarily-hidden-p)
-			   (not (context-panels--visible-side-panel-window)))
-		  (context-panels--close-side-panel-buffer
-		   (buffer-local-value 'context-panels-side-panel-buffer source)))
-		(when (and context-panels--desired-bottom-view-id
-			   (not context-panels--temporarily-hidden-p)
-			   (not (context-panels--visible-bottom-panel-window)))
-		  (context-panels--close-bottom-view-buffer
-		   (buffer-local-value 'context-panels-bottom-panel-buffer source)))
-		(context-panels--restore-desired-panels source)
-		(setq context-panels--temporarily-hidden-p nil))
+		(if (context-panels--source-wants-panels-p source)
+		    (progn
+		      (context-panels--restore-desired-panels source)
+		      (setq context-panels--temporarily-hidden-p nil))
+		  (when (or (context-panels--visible-side-panel-window)
+			    (context-panels--visible-bottom-panel-window))
+		    (context-panels--hide-visible-panels))))
 	    (when (or (context-panels--visible-side-panel-window)
 		      (context-panels--visible-bottom-panel-window))
 	      (context-panels--hide-visible-panels)))
@@ -1342,7 +1364,7 @@ editable prompt point that reconciliation must not disturb."
 	    (when (or context-panels--desired-side-panel-p
 		      (context-panels--visible-side-panel-window))
 	      (context-panels--refresh-scrolled-source-windows)
-              (context-panels-update-active-highlights))
+	      (context-panels-update-active-highlights))
 	    (when (or context-panels--desired-side-panel-p
 		      context-panels--desired-bottom-view-id
 		      (context-panels--visible-side-panel-window)
@@ -1355,27 +1377,27 @@ editable prompt point that reconciliation must not disturb."
 (defun context-panels--bottom-view-index (views view-id)
   "Return index of VIEW-ID in VIEWS, or nil."
   (cl-position-if (lambda (view)
-                    (context-panels--bottom-view-match-p view-id view))
-                  views))
+		    (context-panels--bottom-view-match-p view-id view))
+		  views))
 
 ;;;###autoload
 (defun context-panels-next-bottom-view (&optional source-buffer)
   "Cycle SOURCE-BUFFER's visible bottom panel to the next available view."
   (interactive)
   (let* ((source (or source-buffer (context-panels--source-buffer)))
-         (views (context-panels--bottom-view-descriptors source)))
+	 (views (context-panels--bottom-view-descriptors source)))
     (unless views
       (user-error "No context bottom views"))
     (let* ((current-id (or context-panels--desired-bottom-view-id
-                           (and (buffer-live-p
-                                 (buffer-local-value 'context-panels-bottom-panel-buffer
-                                                     source))
-                                (buffer-local-value
-                                 'context-panels-view-key
-                                 (buffer-local-value 'context-panels-bottom-panel-buffer
-                                                     source)))))
-           (index (or (context-panels--bottom-view-index views current-id) -1))
-           (next (nth (mod (1+ index) (length views)) views)))
+			   (and (buffer-live-p
+				 (buffer-local-value 'context-panels-bottom-panel-buffer
+						     source))
+				(buffer-local-value
+				 'context-panels-view-key
+				 (buffer-local-value 'context-panels-bottom-panel-buffer
+						     source)))))
+	   (index (or (context-panels--bottom-view-index views current-id) -1))
+	   (next (nth (mod (1+ index) (length views)) views)))
       (context-panels-open-bottom-view (plist-get next :context-panels-view-key) source))))
 
 ;;;###autoload
@@ -1383,15 +1405,15 @@ editable prompt point that reconciliation must not disturb."
   "Select and open one of SOURCE-BUFFER's available bottom views."
   (interactive)
   (let* ((source (or source-buffer (context-panels--source-buffer)))
-         (views (context-panels--bottom-view-descriptors source)))
+	 (views (context-panels--bottom-view-descriptors source)))
     (unless views
       (user-error "No context bottom views"))
     (let* ((choices (mapcar (lambda (view)
-                              (cons (context-panels--bottom-view-label view) view))
-                            views))
-           (choice (completing-read "Bottom view: " (mapcar #'car choices)
-                                    nil t))
-           (view (cdr (assoc choice choices))))
+			      (cons (context-panels--bottom-view-label view) view))
+			    views))
+	   (choice (completing-read "Bottom view: " (mapcar #'car choices)
+				    nil t))
+	   (view (cdr (assoc choice choices))))
       (context-panels-open-bottom-view (plist-get view :context-panels-view-key) source))))
 
 ;;;###autoload
@@ -1399,16 +1421,39 @@ editable prompt point that reconciliation must not disturb."
   "Focus SOURCE-BUFFER's visible bottom context view."
   (interactive)
   (let* ((source (or source-buffer (context-panels--source-buffer)))
-         (panel-buffer (buffer-local-value 'context-panels-bottom-panel-buffer
-                                           source))
-         (window (and (buffer-live-p panel-buffer)
-                      (get-buffer-window panel-buffer t))))
+	 (panel-buffer (buffer-local-value 'context-panels-bottom-panel-buffer
+					   source))
+	 (window (and (buffer-live-p panel-buffer)
+		      (get-buffer-window panel-buffer t))))
     (unless (window-live-p window)
       (user-error "No visible context bottom view"))
     (select-window window)
     panel-buffer))
 
 ;;;###autoload
+(defun context-panels--display-bottom-panel-window
+    (panel-buffer source-buffer height &optional select)
+  "Display PANEL-BUFFER as SOURCE-BUFFER's bottom panel with HEIGHT."
+  (when-let* ((window (context-panels--visible-bottom-panel-window)))
+    (unless (eq (window-buffer window) panel-buffer)
+      (delete-window window)))
+  (when-let* ((window (get-buffer-window panel-buffer t)))
+    (unless (eq window (context-panels--visible-bottom-panel-window))
+      (delete-window window)))
+  (let ((window
+	 (display-buffer-in-side-window
+	  panel-buffer
+	  `((side . bottom)
+	    (slot . 1)
+	    (window-height . ,height)
+	    (window-parameters
+	     . ((no-other-window . t)
+		(no-delete-other-windows . t)))))))
+    (context-panels-protect-window window panel-buffer source-buffer)
+    (when select
+      (select-window window))
+    window))
+
 (defun context-panels-open-bottom-view (view-id &optional source-buffer select)
   "Open bottom context view VIEW-ID for SOURCE-BUFFER.
 When SELECT is non-nil, select the bottom view window after rendering."
@@ -1421,7 +1466,7 @@ When SELECT is non-nil, select the bottom view window after rendering."
 	 (panel-buffer (get-buffer-create buffer-name)))
     (when-let* ((window (context-panels--visible-bottom-panel-window)))
       (unless (eq (window-buffer window) panel-buffer)
-        (delete-window window)))
+	(delete-window window)))
     (with-current-buffer panel-buffer
       (context-panels--bottom-view-mode view)
       (setq context-panels-source-buffer source)
@@ -1429,21 +1474,40 @@ When SELECT is non-nil, select the bottom view window after rendering."
       (setq context-panels-view-key (plist-get view :context-panels-view-key))
       (context-panels-render-bottom-view source view))
     (with-current-buffer source
-      (setq context-panels-bottom-panel-buffer panel-buffer))
-    (let ((window
-           (display-buffer-in-side-window
-            panel-buffer
-            `((side . bottom)
-	      (slot . 1)
-	      (window-height . ,height)
-	      (window-parameters
-	       . ((no-other-window . t)
-	          (no-delete-other-windows . t)))))))
-      (context-panels-protect-window window panel-buffer source)
-      (when (or select (plist-get view :select))
-        (select-window window)))
+      (setq context-panels-bottom-panel-buffer panel-buffer)
+      (setq context-panels-bottom-view-desired-id
+	    (plist-get view :context-panels-view-key)))
+    (context-panels--display-bottom-panel-window
+     panel-buffer source height (or select (plist-get view :select)))
     (setq context-panels--desired-bottom-view-id
-          (plist-get view :context-panels-view-key))
+	  (plist-get view :context-panels-view-key))
+    (setq context-panels--last-source-buffer source)
+    (setq context-panels--temporarily-hidden-p nil)
+    panel-buffer))
+
+;;;###autoload
+(defun context-panels-adopt-bottom-view-buffer
+    (buffer view-id &optional source-buffer select)
+  "Adopt BUFFER as bottom context view VIEW-ID for SOURCE-BUFFER.
+VIEW-ID must resolve to a registered bottom view.  This is intended for live
+buffers, such as compilation buffers, whose contents are managed externally."
+  (let* ((source (or source-buffer (context-panels--source-buffer)))
+	 (view (or (context-panels-bottom-view view-id source)
+		   (user-error "No context bottom view: %s" view-id)))
+	 (panel-buffer (get-buffer-create buffer))
+	 (height (context-panels--bottom-view-height source)))
+    (with-current-buffer panel-buffer
+      (setq context-panels-source-buffer source)
+      (setq context-panels-view-id (plist-get view :id))
+      (setq context-panels-view-key (plist-get view :context-panels-view-key)))
+    (with-current-buffer source
+      (setq context-panels-bottom-panel-buffer panel-buffer)
+      (setq context-panels-bottom-view-desired-id
+	    (plist-get view :context-panels-view-key)))
+    (context-panels--display-bottom-panel-window
+     panel-buffer source height (or select (plist-get view :select)))
+    (setq context-panels--desired-bottom-view-id
+	  (plist-get view :context-panels-view-key))
     (setq context-panels--last-source-buffer source)
     (setq context-panels--temporarily-hidden-p nil)
     panel-buffer))
@@ -1454,7 +1518,7 @@ When SELECT is non-nil, select the bottom view window after rendering."
   (interactive)
   (let* ((source (context-panels--source-buffer))
 	 (view-id (or context-panels-view-key
-                      context-panels-view-id
+		      context-panels-view-id
 		      (user-error "No context bottom view associated with buffer"))))
     (context-panels-open-bottom-view view-id source)))
 
@@ -1472,18 +1536,20 @@ When PRESERVE-DESIRE is non-nil, keep workspace desired-bottom state."
       (bury-buffer panel-buffer)
       (when (buffer-live-p source)
 	(with-current-buffer source
-	  (setq context-panels-bottom-panel-buffer nil))))))
+	  (setq context-panels-bottom-panel-buffer nil)
+	  (unless preserve-desire
+	    (setq context-panels-bottom-view-desired-id nil)))))))
 
 (defun context-panels-close-bottom-view ()
   "Close the generic bottom context view for the current source."
   (interactive)
   (let* ((source (context-panels--source-buffer))
 	 (panel-buffer (or (and context-panels-view-id (current-buffer))
-                         (and (buffer-live-p
-                               (buffer-local-value 'context-panels-bottom-panel-buffer
-                                                   source))
-                              (buffer-local-value 'context-panels-bottom-panel-buffer
-                                                  source)))))
+			   (and (buffer-live-p
+				 (buffer-local-value 'context-panels-bottom-panel-buffer
+						     source))
+				(buffer-local-value 'context-panels-bottom-panel-buffer
+						    source)))))
     (when panel-buffer
       (context-panels--close-bottom-view-buffer panel-buffer))))
 
