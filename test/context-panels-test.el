@@ -105,39 +105,17 @@
       (when (buffer-live-p source)
 	(kill-buffer source)))))
 
-(ert-deftest context-panels-open-prefers-composable-rendering-for-alignment ()
-  "Providers with item renderers align rows even when a whole renderer exists."
-  (let ((source (get-buffer-create "*context-panels-test-prefer-composed-source*")))
-    (unwind-protect
-	(progn
-	  (switch-to-buffer source)
-	  (erase-buffer)
-	  (insert "one\ntwo\nthree\nfour\n")
-	  (goto-char (point-min))
-	  (forward-line 2)
-	  (let ((anchor (point)))
-	    (context-panels-mode 1)
-	    (context-panels-register-provider
-	     (list :name 'test
-		   :icon "🧪"
-		   :side-panel-buffer-name "*context-panels-test-prefer-composed-panel*"
-		   :collect-side-items
-		   (lambda (_source)
-		     (list (list :id 'three :label "three" :anchor-pos anchor)))
-		   :render-side-panel
-		   (lambda (_source _items)
-		     (insert "whole\n"))
-		   :render-side-item
-		   (lambda (_source item)
-		     (insert (plist-get item :label) "\n"))))
-	    (let ((panel-buffer (context-panels-open source)))
-	      (with-current-buffer panel-buffer
-		(should (string-prefix-p "\n\nthree\n" (buffer-string)))
-		(should-not (string-match-p "whole" (buffer-string)))))))
-      (when (get-buffer "*context-panels-test-prefer-composed-panel*")
-	(kill-buffer "*context-panels-test-prefer-composed-panel*"))
-      (when (buffer-live-p source)
-	(kill-buffer source)))))
+(ert-deftest context-panels-register-provider-rejects-whole-panel-renderers ()
+  "Providers must render individual items instead of whole side panels."
+  (with-temp-buffer
+    (context-panels-mode 1)
+    (should-error
+     (context-panels-register-provider
+      (list :name 'test
+	    :icon "🧪"
+	    :collect-side-items (lambda (_source) nil)
+	    :render-side-panel (lambda (_source _items))))
+     :type 'error)))
 
 (ert-deftest context-panels-open-ignores-inactive-noncomposable-providers ()
   "Inactive providers do not force fallback rendering for aligned items."

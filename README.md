@@ -12,6 +12,7 @@ Reusable Emacs context-panel primitives for source buffers.
 
 (defun my-notes-provider ()
   (list :name 'notes
+        :icon "📝"
         :collect-side-items
         (lambda (_source)
           (list (list :id 'top :label "Top of buffer" :anchor-pos (point-min))))
@@ -38,7 +39,9 @@ Reusable Emacs context-panel primitives for source buffers.
 
 ## Provider protocol
 
-Provider plists may use the same protocol keys as the original `org-context-panel` extraction, including `:name`, `:collect-side-items`, `:render-side-panel`, `:render-side-item`, `:jump-side-item`, `:collect-top-markers`, `:collect-bottom-views`, `:refresh-source-overlays`, `:cleanup-source-overlays`, `:follow-source-p`, `:side-panel-mode`, `:side-panel-buffer-name`, and `:side-panel-width`.
+Provider plists use a compact item-rendering protocol. Side-panel providers must declare `:name`, `:icon`, `:collect-side-items`, and `:render-side-item`. Whole-panel body renderers are intentionally unsupported: the side-panel body belongs only to provider-rendered rows so viewport alignment, highlighting, and mode-line counters stay consistent.
+
+Additional provider keys include `:jump-side-item`, `:collect-top-markers`, `:collect-bottom-views`, `:refresh-source-overlays`, `:cleanup-source-overlays`, `:follow-source-p`, `:side-panel-mode`, `:side-panel-buffer-name`, and `:side-panel-width`.
 
 ## Bottom views
 

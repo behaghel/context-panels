@@ -252,6 +252,8 @@ PROVIDER is a plist descriptor.  Registering another provider with the same
 `:name' replaces the previous descriptor while preserving registration order."
   (let ((name (context-panels--provider-name provider)))
     (context-panels--provider-icon provider)
+    (when (plist-get provider :render-side-panel)
+      (error "Context panel provider %S uses retired :render-side-panel" name))
     (setq context-panels-providers
 	  (append (cl-remove name context-panels-providers
 			     :key (lambda (entry) (plist-get entry :name))
@@ -676,14 +678,6 @@ line."
 		     thereis (< left-part right-part)
 		     until (/= left-part right-part))))))
 
-(defun context-panels--default-render-side-panel (_source-buffer items)
-  "Render fallback side-panel item rows for ITEMS."
-  (dolist (item items)
-    (insert (format "- %s\n" (or (plist-get item :label)
-				 (plist-get item :id)
-				 (plist-get item :provider)
-				 "item")))))
-
 (defun context-panels--side-panel-property (source-buffer property)
   "Return provider-selected side panel PROPERTY for SOURCE-BUFFER, or nil."
   (with-current-buffer source-buffer
@@ -826,13 +820,6 @@ their panel buffer."
 	(add-text-properties start (point)
 			     `(context-panels-item ,item))))))
 
-(defun context-panels--render-provider-side-panels (source-buffer items providers)
-  "Render SOURCE-BUFFER using provider whole-panel renderers."
-  (dolist (provider providers)
-    (let ((provider-items (context-panels--provider-items provider items)))
-      (when-let* ((function (plist-get provider :render-side-panel)))
-	(funcall function source-buffer provider-items)))))
-
 (defun context-panels-render-side-panel (source-buffer &optional source-window)
   "Render side panel contents for SOURCE-BUFFER.
 When SOURCE-WINDOW is non-nil, provider items are projected onto that window's
@@ -865,11 +852,8 @@ visible viewport rows."
     (let ((inhibit-read-only t))
       (context-panels-clear-active-highlights source-buffer (current-buffer))
       (erase-buffer)
-      (if composable
-	  (context-panels--render-composed-side-panel source-buffer items providers)
-	(context-panels--render-provider-side-panels source-buffer items providers))
-      (when (= (buffer-size) 0)
-	(context-panels--default-render-side-panel source-buffer items))
+      (when composable
+	(context-panels--render-composed-side-panel source-buffer items providers))
       (goto-char (point-min))
       (goto-char (point-min))
       (context-panels-update-active-highlights source-buffer))))
