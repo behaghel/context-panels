@@ -168,6 +168,9 @@ file is an auxiliary sidecar or generated artifact rather than a source file.")
 (defvar context-panels--repairing-window nil
   "Non-nil while restoring a protected context-panel window.")
 
+(defvar context-panels--syncing-focus nil
+  "Non-nil while synchronizing provider focus between context panels.")
+
 (defvar context-panels-current-source-buffer nil
   "Source buffer dynamically bound while running side-panel lifecycle hooks.")
 
@@ -246,12 +249,25 @@ LABEL unchanged except for text-property copy semantics."
 			      nil text))
     text))
 
+(defun context-panels--validate-synced-focus (provider)
+  "Validate PROVIDER's optional synchronized-focus descriptor."
+  (when-let* ((contract (plist-get provider :synced-focus)))
+    (dolist (key '(:item-key :current-key :focus :bottom-view-id))
+      (unless (plist-get contract key)
+	(error "Context panel provider %S synchronized focus is missing %S"
+	       (plist-get provider :name) key)))
+    (dolist (key '(:item-key :current-key :focus))
+      (unless (functionp (plist-get contract key))
+	(error "Context panel provider %S synchronized focus %S is not callable"
+	       (plist-get provider :name) key)))))
+
 (defun context-panels-register-provider (provider)
   "Register PROVIDER for the current buffer and return it.
 PROVIDER is a plist descriptor.  Registering another provider with the same
 `:name' replaces the previous descriptor while preserving registration order."
   (let ((name (context-panels--provider-name provider)))
     (context-panels--provider-icon provider)
+    (context-panels--validate-synced-focus provider)
     (when (plist-get provider :render-side-panel)
       (error "Context panel provider %S uses retired :render-side-panel" name))
     (setq context-panels-providers
@@ -412,6 +428,106 @@ source position inside `window-start' and `window-end'."
       (plist-get item :jump-pos)
       (plist-get item :anchor-pos)
       (context-panels-item-anchor-position item)))
+
+(defun context-panels--synced-focus-claim (source-buffer item)
+  "Return the synchronized-focus provider claim for ITEM in SOURCE-BUFFER.
+Signal `user-error' when multiple providers claim the same item."
+  (let (claims)
+    (with-current-buffer source-buffer
+      (dolist (provider context-panels-providers)
+	(when-let* ((contract (plist-get provider :synced-focus))
+		    (key (funcall (plist-get contract :item-key)
+				  source-buffer item)))
+	  (push (list provider contract key) claims))))
+    (when (> (length claims) 1)
+      (user-error "Context item has overlapping synchronized-focus providers: %s"
+		  (mapconcat (lambda (claim)
+			       (symbol-name (plist-get (car claim) :name)))
+			     (nreverse claims) ", ")))
+    (car claims)))
+
+(defun context-panels--bottom-panel-visible-for-source-p (source-buffer)
+  "Return non-nil when SOURCE-BUFFER has a visible bottom panel."
+  (when-let* ((buffer (and (buffer-live-p source-buffer)
+			   (buffer-local-value
+			    'context-panels-bottom-panel-buffer source-buffer))))
+    (get-buffer-window buffer t)))
+
+(defun context-panels--goto-synced-focus-key (source-buffer contract key)
+  "Move point to the first side item matching CONTRACT KEY for SOURCE-BUFFER."
+  (let ((function (plist-get contract :item-key))
+	(found nil))
+    (goto-char (point-min))
+    (while (and (not found) (< (point) (point-max)))
+      (let ((item (context-panels-item-at-position (point))))
+	(when (and item (equal key (funcall function source-buffer item)))
+	  (setq found (point)))
+	(goto-char (or (next-single-property-change
+			(point) 'context-panels-item nil (point-max))
+		       (point-max)))))
+    (when found
+      (goto-char found))))
+
+(defun context-panels--sync-selected-panel-focus ()
+  "Synchronize focus from the selected context-panel window when opted in."
+  (unless context-panels--syncing-focus
+    (let* ((window (selected-window))
+	   (panel (and (window-live-p window) (window-buffer window)))
+	   (source (and (buffer-live-p panel)
+			(with-current-buffer panel
+			  (and (buffer-live-p context-panels-source-buffer)
+			       context-panels-source-buffer))))
+	   (view-id (and source (buffer-local-value 'context-panels-view-id panel)))
+	   (view-key (and source (buffer-local-value 'context-panels-view-key panel))))
+      (if view-id
+	  (when-let* ((provider-name (car-safe view-key))
+		      (provider (with-current-buffer source
+				  (context-panels-registered-provider provider-name)))
+		      (contract (plist-get provider :synced-focus))
+		      ((eq view-id (plist-get contract :bottom-view-id))))
+	    (context-panels-notify-synced-focus provider-name source))
+	(let* ((item (and source (with-current-buffer panel
+				   (context-panels-item-at-point))))
+	       (claim (and item
+			   (context-panels--synced-focus-claim source item))))
+	  (when claim
+	    (pcase-let ((`(,provider ,contract ,key) claim))
+	      (let ((context-panels--syncing-focus t)
+		    (current (funcall (plist-get contract :current-key) source)))
+		(unless (equal current key)
+		  (funcall (plist-get contract :focus) source key item))
+		(when (context-panels--bottom-panel-visible-for-source-p source)
+		  (context-panels-open-bottom-view
+		   (plist-get contract :bottom-view-id) source nil))))))))))
+
+(defun context-panels-notify-synced-focus (provider-name source-buffer)
+  "Synchronize a visible side panel after PROVIDER-NAME changes focus.
+SOURCE-BUFFER is the provider's source.  Closed side panels remain closed."
+  (unless context-panels--syncing-focus
+    (let* ((provider (and (buffer-live-p source-buffer)
+			  (with-current-buffer source-buffer
+			    (context-panels-registered-provider provider-name))))
+	   (contract (and provider (plist-get provider :synced-focus))))
+      (when provider
+	(unless contract
+	  (user-error "Provider %S has no synchronized-focus contract" provider-name))
+	(let ((context-panels--syncing-focus t)
+	      (key (funcall (plist-get contract :current-key) source-buffer)))
+	  (when-let* ((panel (buffer-local-value
+			      'context-panels-side-panel-buffer source-buffer))
+		      (window (and (buffer-live-p panel)
+				   (get-buffer-window panel t))))
+	    (when key
+	      (with-current-buffer panel
+		(unless (context-panels--goto-synced-focus-key
+			 source-buffer contract key)
+		  (context-panels-render-side-panel
+		   source-buffer (get-buffer-window source-buffer t))
+		  (unless (context-panels--goto-synced-focus-key
+			   source-buffer contract key)
+		    (user-error "Synchronized focus %S is not visible for provider %S"
+				key provider-name)))
+		(set-window-point window (point))))))))))
 
 (defun context-panels-item-at-position (position)
   "Return context-panel item at POSITION, or nil."
@@ -824,7 +940,9 @@ their panel buffer."
   "Render side panel contents for SOURCE-BUFFER.
 When SOURCE-WINDOW is non-nil, provider items are projected onto that window's
 visible viewport rows."
-  (let* ((items (if source-window
+  (let* ((previous-key (when-let* ((item (context-panels-item-at-point)))
+			 (context-panels-item-key item)))
+	 (items (if source-window
 		    (context-panels-items-for-window source-window source-buffer)
 		  (context-panels-collect-side-items source-buffer)))
 	 (viewport-items (if source-window
@@ -855,7 +973,8 @@ visible viewport rows."
       (when composable
 	(context-panels--render-composed-side-panel source-buffer items providers))
       (goto-char (point-min))
-      (goto-char (point-min))
+      (when previous-key
+	(context-panels-goto-item-key previous-key))
       (context-panels-update-active-highlights source-buffer))))
 
 (defun context-panels--active-side-item-at-point ()
@@ -1456,6 +1575,7 @@ editable prompt point that reconciliation must not disturb."
     (let ((context-panels--following t))
       (unwind-protect
 	  (progn
+	    (context-panels--sync-selected-panel-focus)
 	    (when-let* ((source (context-panels--selected-source-buffer)))
 	      (setq context-panels--last-source-buffer source))
 	    (when (or context-panels--desired-side-panel-p

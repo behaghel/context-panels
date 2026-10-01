@@ -816,5 +816,184 @@
 	(kill-buffer source))
       (delete-other-windows))))
 
+(ert-deftest context-panels-synced-focus-side-row-updates-provider-and-bottom-view ()
+  "Selecting a synchronized side row updates focus and claims a visible bottom slot."
+  (let ((source (generate-new-buffer " *context-panels-sync-source*"))
+	(current-key nil))
+    (unwind-protect
+	(progn
+	  (delete-other-windows)
+	  (switch-to-buffer source)
+	  (context-panels-mode 1)
+	  (context-panels-register-provider
+	   (list :name 'sync
+		 :icon "S"
+		 :side-panel-buffer-name "*context-panels-sync-side*"
+		 :collect-side-items
+		 (lambda (_source)
+		   (list (list :id 'one :sync-key 'one :label "one")
+			 (list :id 'two :sync-key 'two :label "two")))
+		 :render-side-item
+		 (lambda (_source item)
+		   (insert (plist-get item :label) "\n"))
+		 :collect-bottom-views
+		 (lambda (_source)
+		   (list (list :id 'chat :render (lambda (&rest _) (insert "chat")))
+			 (list :id 'other :render (lambda (&rest _) (insert "other")))))
+		 :synced-focus
+		 (list :item-key (lambda (_source item) (plist-get item :sync-key))
+		       :current-key (lambda (_source) current-key)
+		       :focus (lambda (_source key _item) (setq current-key key))
+		       :bottom-view-id 'chat)))
+	  (let ((side (context-panels-open source)))
+	    (context-panels-open-bottom-view 'other source)
+	    (select-window (get-buffer-window side t))
+	    (with-current-buffer side
+	      (context-panels-goto-item-key 'two))
+	    (context-panels--sync-selected-panel-focus)
+	    (should (eq current-key 'two))
+	    (should (eq (buffer-local-value
+			 'context-panels-view-id
+			 (buffer-local-value 'context-panels-bottom-panel-buffer source))
+			'chat))))
+      (dolist (name '("*context-panels-sync-side*"
+		      "*Context View: sync/chat*"
+		      "*Context View: sync/other*"))
+	(when-let* ((buffer (get-buffer name)))
+	  (kill-buffer buffer)))
+      (when (buffer-live-p source)
+	(kill-buffer source))
+      (delete-other-windows))))
+
+(ert-deftest context-panels-synced-focus-ignores-unclaimed-rows-and-closed-bottom ()
+  "Unclaimed rows do not change focus and synchronization does not open a bottom view."
+  (let ((source (generate-new-buffer " *context-panels-sync-closed-source*"))
+	(current-key 'one))
+    (unwind-protect
+	(progn
+	  (delete-other-windows)
+	  (switch-to-buffer source)
+	  (context-panels-mode 1)
+	  (context-panels-register-provider
+	   (list :name 'sync
+		 :icon "S"
+		 :side-panel-buffer-name "*context-panels-sync-closed-side*"
+		 :collect-side-items
+		 (lambda (_source)
+		   (list (list :id 'ordinary :label "ordinary")))
+		 :render-side-item
+		 (lambda (_source item) (insert (plist-get item :label) "\n"))
+		 :synced-focus
+		 (list :item-key (lambda (_source item) (plist-get item :sync-key))
+		       :current-key (lambda (_source) current-key)
+		       :focus (lambda (_source key _item) (setq current-key key))
+		       :bottom-view-id 'chat)))
+	  (let ((side (context-panels-open source)))
+	    (select-window (get-buffer-window side t))
+	    (context-panels--sync-selected-panel-focus)
+	    (should (eq current-key 'one))
+	    (should-not (buffer-local-value 'context-panels-bottom-panel-buffer source))))
+      (when-let* ((buffer (get-buffer "*context-panels-sync-closed-side*")))
+	(kill-buffer buffer))
+      (when (buffer-live-p source)
+	(kill-buffer source))
+      (delete-other-windows))))
+
+(ert-deftest context-panels-provider-focus-notification-moves-visible-side-row ()
+  "Explicit provider focus notification moves an existing side panel by key."
+  (let ((source (generate-new-buffer " *context-panels-notify-source*"))
+	(current-key 'one))
+    (unwind-protect
+	(progn
+	  (delete-other-windows)
+	  (switch-to-buffer source)
+	  (context-panels-mode 1)
+	  (context-panels-register-provider
+	   (list :name 'sync
+		 :icon "S"
+		 :side-panel-buffer-name "*context-panels-notify-side*"
+		 :collect-side-items
+		 (lambda (_source)
+		   (list (list :id 'one :sync-key 'one :label "one")
+			 (list :id 'two :sync-key 'two :label "two")))
+		 :render-side-item
+		 (lambda (_source item) (insert (plist-get item :label) "\n"))
+		 :synced-focus
+		 (list :item-key (lambda (_source item) (plist-get item :sync-key))
+		       :current-key (lambda (_source) current-key)
+		       :focus #'ignore
+		       :bottom-view-id 'chat)))
+	  (let ((side (context-panels-open source)))
+	    (setq current-key 'two)
+	    (context-panels-notify-synced-focus 'sync source)
+	    (with-current-buffer side
+	      (should (eq (context-panels-item-key (context-panels-item-at-point))
+			  'two)))))
+      (when-let* ((buffer (get-buffer "*context-panels-notify-side*")))
+	(kill-buffer buffer))
+      (when (buffer-live-p source)
+	(kill-buffer source))
+      (delete-other-windows))))
+
+(ert-deftest context-panels-synced-focus-bottom-window-reasserts-side-row ()
+  "Selecting a synchronized bottom view reasserts its current side focus."
+  (let ((source (generate-new-buffer " *context-panels-bottom-sync-source*"))
+	(current-key 'two))
+    (unwind-protect
+	(progn
+	  (delete-other-windows)
+	  (switch-to-buffer source)
+	  (context-panels-mode 1)
+	  (context-panels-register-provider
+	   (list :name 'sync
+		 :icon "S"
+		 :side-panel-buffer-name "*context-panels-bottom-sync-side*"
+		 :collect-side-items
+		 (lambda (_source)
+		   (list (list :id 'one :sync-key 'one :label "one")
+			 (list :id 'two :sync-key 'two :label "two")))
+		 :render-side-item
+		 (lambda (_source item) (insert (plist-get item :label) "\n"))
+		 :collect-bottom-views
+		 (lambda (_source)
+		   (list (list :id 'chat :render (lambda (&rest _) (insert "chat")))))
+		 :synced-focus
+		 (list :item-key (lambda (_source item) (plist-get item :sync-key))
+		       :current-key (lambda (_source) current-key)
+		       :focus #'ignore
+		       :bottom-view-id 'chat)))
+	  (let* ((side (context-panels-open source))
+		 (bottom (context-panels-open-bottom-view 'chat source)))
+	    (with-current-buffer side
+	      (context-panels-goto-item-key 'one))
+	    (select-window (get-buffer-window bottom t))
+	    (context-panels--sync-selected-panel-focus)
+	    (with-current-buffer side
+	      (should (eq (context-panels-item-key (context-panels-item-at-point))
+			  'two)))))
+      (dolist (name '("*context-panels-bottom-sync-side*"
+		      "*Context View: sync/chat*"))
+	(when-let* ((buffer (get-buffer name)))
+	  (kill-buffer buffer)))
+      (when (buffer-live-p source)
+	(kill-buffer source))
+      (delete-other-windows))))
+
+(ert-deftest context-panels-synced-focus-rejects-overlapping-claims ()
+  "Two synchronized providers may not claim the same side item."
+  (with-temp-buffer
+    (context-panels-mode 1)
+    (dolist (name '(one two))
+      (context-panels-register-provider
+       (list :name name :icon "S"
+	     :synced-focus
+	     (list :item-key (lambda (_source _item) 'same)
+		   :current-key (lambda (_source) nil)
+		   :focus #'ignore
+		   :bottom-view-id 'chat))))
+    (should-error
+     (context-panels--synced-focus-claim (current-buffer) '(:id item))
+     :type 'user-error)))
+
 (provide 'context-panels-test)
 ;;; context-panels-test.el ends here

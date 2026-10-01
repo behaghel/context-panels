@@ -43,6 +43,28 @@ Provider plists use a compact item-rendering protocol. Side-panel providers must
 
 Additional provider keys include `:jump-side-item`, `:collect-top-markers`, `:collect-bottom-views`, `:refresh-source-overlays`, `:cleanup-source-overlays`, `:follow-source-p`, `:side-panel-mode`, `:side-panel-buffer-name`, and `:side-panel-width`.
 
+### Synchronized focus
+
+Providers may opt into synchronized side/bottom focus with a `:synced-focus`
+plist.  It declares `:item-key`, `:current-key`, `:focus`, and
+`:bottom-view-id`:
+
+- `:item-key` receives `(SOURCE-BUFFER ITEM)` and returns the provider's stable
+  semantic focus key, or nil when the item does not belong to that focus cohort.
+- `:current-key` receives `SOURCE-BUFFER` and returns the provider's current key,
+  or nil for a bottom context with no side row.
+- `:focus` receives `(SOURCE-BUFFER KEY ITEM)` and applies side-originated focus.
+- `:bottom-view-id` names the provider's paired bottom view.
+
+Claims are exclusive: multiple providers claiming one item are a configuration
+error.  Selecting a claimed side row synchronizes provider focus and switches an
+already-visible bottom slot to the paired view; it never opens a closed bottom
+panel.  Providers call `context-panels-notify-synced-focus` after changing focus
+from a bottom view.  Notification moves an already-visible side panel without
+opening one.  Non-participating rows do not interfere with synchronized focus.
+Rendering preserves side point by stable item identity and never originates a
+focus transition.
+
 ## Bottom views
 
 Providers may expose one or more bottom views with `:collect-bottom-views`.  A bottom view is a plist with:
