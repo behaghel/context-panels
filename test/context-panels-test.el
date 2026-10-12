@@ -233,6 +233,111 @@
 	(kill-buffer source))
       (delete-other-windows))))
 
+(ert-deftest context-panels-navigation-uses-last-rendered-items ()
+  "Moving point with a side panel open does not rerun provider collection."
+  (let ((source (get-buffer-create "*context-panels-test-fast-navigation*"))
+	(collects 0))
+    (unwind-protect
+	(progn
+	  (delete-other-windows)
+	  (switch-to-buffer source)
+	  (erase-buffer)
+	  (insert "first\nsecond\n")
+	  (context-panels-mode 1)
+	  (context-panels-register-provider
+	   (list :name 'test :icon "🧪"
+		 :side-panel-buffer-name "*context-panels-test-fast-panel*"
+		 :collect-side-items
+		 (lambda (_source)
+		   (setq collects (1+ collects))
+		   (list (list :id 'first :source-start 1 :source-end 6)
+			 (list :id 'second :source-start 7 :source-end 13)))
+		 :render-side-item (lambda (_source item)
+				     (insert (format "%s\n" (plist-get item :id))))))
+	  (context-panels-open source)
+	  (let ((after-open collects))
+	    (goto-char 1)
+	    (context-panels-update-active-highlights source)
+	    (goto-char 7)
+	    (context-panels-update-active-highlights source)
+	    (should (= collects after-open))
+	    (should (= (length context-panels-active-source-overlays) 1))
+	    (should (= (overlay-start (car context-panels-active-source-overlays)) 7)))
+	  (let ((before-edit collects))
+	    (goto-char (point-max))
+	    (insert "new\n")
+	    (context-panels-update-active-highlights source)
+	    (should (> collects before-edit)))
+	  (let ((before-refresh collects))
+	    (context-panels-refresh)
+	    (should (> collects before-refresh))))
+      (when (get-buffer "*context-panels-test-fast-panel*")
+	(kill-buffer "*context-panels-test-fast-panel*"))
+      (when (buffer-live-p source) (kill-buffer source))
+      (delete-other-windows))))
+
+(ert-deftest context-panels-provider-changes-invalidate-navigation-snapshot ()
+  "New and removed providers cannot leave stale source items active."
+  (with-temp-buffer
+    (setq context-panels--rendered-source-items '(1 . ((:id old))))
+    (context-panels-register-provider
+     '(:name test :icon "🧪" :collect-side-items ignore
+	     :render-side-item ignore))
+    (should-not context-panels--rendered-source-items)
+    (setq context-panels--rendered-source-items '(1 . ((:id old))))
+    (context-panels-unregister-provider 'test)
+    (should-not context-panels--rendered-source-items)))
+
+(ert-deftest context-panels-post-command-defers-viewport-rebuild ()
+  "A navigation command schedules viewport work without rendering inline."
+  (let ((context-panels--desired-side-panel-p t)
+	(scheduled nil))
+    (cl-letf (((symbol-function 'context-panels--sync-selected-panel-focus)
+	       (lambda () nil))
+	      ((symbol-function 'context-panels--selected-source-buffer)
+	       (lambda () nil))
+	      ((symbol-function 'context-panels--visible-side-panel-window)
+	       (lambda () t))
+	      ((symbol-function 'context-panels--refresh-scrolled-source-windows)
+	       (lambda () (ert-fail "Synchronous viewport rebuild")))
+	      ((symbol-function 'context-panels--schedule-viewport-refresh)
+	       (lambda (&rest _) (setq scheduled t)))
+	      ((symbol-function 'context-panels-update-active-highlights)
+	       (lambda (&rest _) nil))
+	      ((symbol-function 'context-panels--schedule-reconcile)
+	       (lambda (&rest _) nil)))
+      (context-panels--follow-selected-buffer)
+      (should scheduled))))
+
+(ert-deftest context-panels-viewport-render-collects-provider-once ()
+  "Rendering a scrolled viewport shares one provider snapshot for all counts."
+  (let ((source (get-buffer-create "*context-panels-test-viewport-cost*"))
+	(collects 0))
+    (unwind-protect
+	(progn
+	  (delete-other-windows)
+	  (switch-to-buffer source)
+	  (erase-buffer)
+	  (insert "first\nsecond\n")
+	  (context-panels-mode 1)
+	  (context-panels-register-provider
+	   (list :name 'test :icon "🧪"
+		 :side-panel-buffer-name "*context-panels-test-viewport-panel*"
+		 :collect-side-items
+		 (lambda (_source)
+		   (setq collects (1+ collects))
+		   (list (list :id 'first :source-start 1 :source-end 6)))
+		 :render-side-item (lambda (_source _item) (insert "first\n"))))
+	  (let ((panel (context-panels-open source)))
+	    (setq collects 0)
+	    (with-current-buffer panel
+	      (context-panels-render-side-panel source (get-buffer-window source t)))
+	    (should (= collects 1))))
+      (when (get-buffer "*context-panels-test-viewport-panel*")
+	(kill-buffer "*context-panels-test-viewport-panel*"))
+      (when (buffer-live-p source) (kill-buffer source))
+      (delete-other-windows))))
+
 (ert-deftest context-panels-reveals-active-side-item-from-source-point ()
   "Source-driven highlighting may scroll side panel to reveal active item."
   (let ((source (get-buffer-create "*context-panels-test-reveal-source*"))

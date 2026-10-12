@@ -59,6 +59,12 @@ Provider/view buffers default to `*BASE: provider/id*'."
   :type 'function
   :group 'context-panels)
 
+(defcustom context-panels-viewport-refresh-idle-delay 0.05
+  "Seconds of idle time before rebuilding side rows after a viewport change.
+Source navigation never waits for a viewport rebuild."
+  :type 'number
+  :group 'context-panels)
+
 (defcustom context-panels-reveal-active-side-item t
   "Whether source navigation should reveal the active side-panel item.
 When non-nil and the selected window is the source buffer, active highlighting
@@ -140,6 +146,12 @@ file is an auxiliary sidecar or generated artifact rather than a source file.")
 
 (defvar-local context-panels-mode-line-counts "∅/∅/∅"
   "Rendered visible/viewport/total side item counts for this side panel.")
+
+(defvar-local context-panels--rendered-source-items nil
+  "Source-local (CHAR-TICK . ITEMS) snapshot from the last side render.")
+
+(defvar context-panels--render-raw-items nil
+  "Dynamically scoped (SOURCE . ITEMS) snapshot during one side render.")
 
 (defvar context-panels--following nil
   "Non-nil while `context-panels' is following selected windows.")
@@ -275,6 +287,7 @@ PROVIDER is a plist descriptor.  Registering another provider with the same
 			     :key (lambda (entry) (plist-get entry :name))
 			     :test #'eq)
 		  (list provider)))
+    (setq context-panels--rendered-source-items nil)
     provider))
 
 (defun context-panels-unregister-provider (name)
@@ -282,7 +295,8 @@ PROVIDER is a plist descriptor.  Registering another provider with the same
   (setq context-panels-providers
 	(cl-remove name context-panels-providers
 		   :key (lambda (entry) (plist-get entry :name))
-		   :test #'eq)))
+		   :test #'eq))
+  (setq context-panels--rendered-source-items nil))
 
 (defun context-panels-registered-provider (name)
   "Return registered provider NAME for the current buffer, or nil."
@@ -305,12 +319,15 @@ Unlike `context-panels-collect-side-items', this does not hide folded or
 invisible anchors.  Provider collection/filtering still applies."
   (let ((buffer (or source-buffer (current-buffer)))
 	items)
-    (with-current-buffer buffer
-      (dolist (provider context-panels-providers)
-	(when-let* ((function (plist-get provider :collect-side-items)))
-	  (dolist (item (funcall function buffer))
-	    (push (context-panels--item-with-provider item provider) items)))))
-    (nreverse items)))
+    (if (and context-panels--render-raw-items
+	     (eq buffer (car context-panels--render-raw-items)))
+	(cdr context-panels--render-raw-items)
+      (with-current-buffer buffer
+	(dolist (provider context-panels-providers)
+	  (when-let* ((function (plist-get provider :collect-side-items)))
+	    (dolist (item (funcall function buffer))
+	      (push (context-panels--item-with-provider item provider) items)))))
+      (nreverse items))))
 
 (defun context-panels-collect-side-items (&optional source-buffer)
   "Collect side item descriptors for SOURCE-BUFFER.
@@ -319,12 +336,16 @@ copied and annotated with its provider name in `:provider'."
   (let ((buffer (or source-buffer (current-buffer)))
 	items)
     (with-current-buffer buffer
-      (dolist (provider context-panels-providers)
-	(when-let* ((function (plist-get provider :collect-side-items)))
-	  (dolist (item (funcall function buffer))
-	    (unless (context-panels-item-hidden-p item)
-	      (push (context-panels--item-with-provider item provider) items))))))
-    (nreverse items)))
+      (if (and context-panels--render-raw-items
+	       (eq buffer (car context-panels--render-raw-items)))
+	  (cl-remove-if #'context-panels-item-hidden-p
+			(cdr context-panels--render-raw-items))
+	(dolist (provider context-panels-providers)
+	  (when-let* ((function (plist-get provider :collect-side-items)))
+	    (dolist (item (funcall function buffer))
+	      (unless (context-panels-item-hidden-p item)
+		(push (context-panels--item-with-provider item provider) items)))))
+	(nreverse items)))))
 
 (defun context-panels-item-anchor-position (item)
   "Return source buffer anchor position for ITEM, or nil."
@@ -915,7 +936,7 @@ their panel buffer."
   (unless (timerp context-panels--viewport-refresh-timer)
     (setq context-panels--viewport-refresh-timer
 	  (run-with-idle-timer
-	   0 nil
+	   context-panels-viewport-refresh-idle-delay nil
 	   (lambda ()
 	     (setq context-panels--viewport-refresh-timer nil)
 	     (context-panels--refresh-scrolled-source-windows))))))
@@ -942,6 +963,8 @@ When SOURCE-WINDOW is non-nil, provider items are projected onto that window's
 visible viewport rows."
   (let* ((previous-key (when-let* ((item (context-panels-item-at-point)))
 			 (context-panels-item-key item)))
+	 (context-panels--render-raw-items
+	  (cons source-buffer (context-panels-collect-side-items-raw source-buffer)))
 	 (items (if source-window
 		    (context-panels-items-for-window source-window source-buffer)
 		  (context-panels-collect-side-items source-buffer)))
@@ -960,6 +983,9 @@ visible viewport rows."
 			  (cl-every (lambda (provider)
 				      (plist-get provider :render-side-item))
 				    item-providers))))
+    (with-current-buffer source-buffer
+      (setq context-panels--rendered-source-items
+	    (cons (buffer-chars-modified-tick) total-items)))
     (setq-local context-panels-mode-line-counts
 		(context-panels--format-mode-line-counts
 		 items viewport-items total-items providers)
@@ -988,12 +1014,23 @@ visible viewport rows."
     (let ((pos (point))
 	  (providers (context-panels-registered-providers))
 	  active)
-      (dolist (item (context-panels-collect-side-items source-buffer))
-	(when-let* ((provider (context-panels--item-provider item providers))
-		    (range (context-panels--active-source-range
-			    source-buffer item provider)))
-	  (when (and (>= pos (car range)) (< pos (max (1+ (car range)) (cdr range))))
-	    (push item active))))
+      (let* ((panel-visible (context-panels--visible-side-panel-window))
+	     (items (if (and panel-visible context-panels--rendered-source-items
+			     (= (car context-panels--rendered-source-items)
+				(buffer-chars-modified-tick)))
+			(cdr context-panels--rendered-source-items)
+		      (let ((fresh (context-panels-collect-side-items-raw source-buffer)))
+			(when panel-visible
+			  (setq context-panels--rendered-source-items
+				(cons (buffer-chars-modified-tick) fresh)))
+			fresh))))
+	(dolist (item items)
+	  (unless (context-panels-item-hidden-p item)
+	    (when-let* ((provider (context-panels--item-provider item providers))
+			(range (context-panels--active-source-range
+				source-buffer item provider)))
+	      (when (and (>= pos (car range)) (< pos (max (1+ (car range)) (cdr range))))
+		(push item active))))))
       (nreverse active))))
 
 (defun context-panels--active-items (source-buffer)
@@ -1580,7 +1617,7 @@ editable prompt point that reconciliation must not disturb."
 	      (setq context-panels--last-source-buffer source))
 	    (when (or context-panels--desired-side-panel-p
 		      (context-panels--visible-side-panel-window))
-	      (context-panels--refresh-scrolled-source-windows)
+	      (context-panels--schedule-viewport-refresh)
 	      (context-panels-update-active-highlights))
 	    (when (or context-panels--desired-side-panel-p
 		      context-panels--desired-bottom-view-id

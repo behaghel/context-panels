@@ -110,6 +110,8 @@ When a side panel is visible, `context-panels` highlights the active mapping bet
 - Highlighting never scrolls the source window.
 - When source navigation makes the active side item fall outside the side-panel viewport, `context-panels-reveal-active-side-item` can scroll the side panel just enough to reveal it. This is enabled by default and only applies when the selected window is the source. Image rows can make visibility checks optimistic, so items that are visible but near the bottom of the side window may also be revealed.
 - Closing the side panel clears native highlights.
+- Navigation highlights use the last rendered source item snapshot instead of recollecting providers on every command. Source text edits invalidate that snapshot; explicit panel refreshes and viewport renders rebuild it. Providers should refresh the panel after changing external state such as sidecars.
+- A viewport render collects each provider once and shares the result across visible rows and counts. Viewport rebuilding is deferred until `context-panels-viewport-refresh-idle-delay` seconds of idle time (default 0.05), keeping scrolling commands off the synchronous render path.
 
 Side items can describe their source target with `:source-start` and `:source-end`.  If only `:anchor-pos` or `:source-start` is present, the source highlight expands to that logical line.
 
