@@ -46,6 +46,13 @@ Counters update as part of side-panel rendering only. They do not update indepen
 
 Counters are identical regardless of whether the selected window is the source or the side panel.
 
+## Panel lifecycle
+Side and bottom panels are owned by a source buffer, not by the currently selected window. Once panels are open, they must remain open for as long as their source buffer remains visible in any ordinary non-auxiliary window on the frame.
+
+Selecting the minibuffer, a side panel, a bottom panel, an ignored sidecar, or another buffer in a different visible ordinary window must not hide or recreate the panels while the original source is still visible. Hiding happens only when the panel-owned source buffer is removed from the visible window layout, for example when its source window switches to another buffer or is deleted.
+
+When the source becomes visible again and has remembered desired panel state, the side and bottom panels may be restored. Reconciliation should be debounced and should avoid unnecessary rerendering of already-correct visible panels, especially editable bottom views.
+
 ## Formatting
 - No label prefix (`Ctx:` is omitted).
 - No source buffer identity.
@@ -69,6 +76,9 @@ Counters are identical regardless of whether the selected window is the source o
 9. `total` includes all raw provider-collected side items for the source.
 10. Counters update during side-panel render and remain stable across source/panel focus changes.
 11. Tests cover single-provider, multi-provider, item-icon override, empty segment, missing provider icon, hidden/folded viewport-vs-visible semantics, and total raw-count semantics.
+12. Panels remain visible when their source remains visible, even if another window or the minibuffer is selected.
+13. Panels hide only after their owning source disappears from the visible ordinary-window layout.
+14. Restoring panels for a re-visible source preserves per-source desired side and bottom view state.
 
 ## Implementation Notes
 Likely `context-panels` changes:
@@ -83,3 +93,9 @@ Provider updates:
 - `org-comments` provider declares a default `:icon`.
 - Comment items expose their row/effective icon (`☁️`, `✍️`, `🤖`) via `:icon` so mode-line grouping matches row-leading icons.
 - `org-marginalia` and tests declare provider icons.
+
+Lifecycle notes:
+- Track the panel-owned source from visible panel buffers first (`context-panels-source-buffer`), then verify that source is still visible with ordinary-window checks.
+- Only fall back to the selected source when there is no still-visible panel-owned source.
+- Keep `window-configuration-change-hook` work debounced and observational; schedule reconciliation rather than mutating layout directly from the hook.
+- `post-command-hook` should not hide panels merely because point moved to the minibuffer or an auxiliary panel.

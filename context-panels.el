@@ -1445,15 +1445,31 @@ keeps a stable bottom window size."
 				      (window-buffer (selected-window)))))
       (and (buffer-live-p source) source))))
 
+(defun context-panels--visible-panel-source ()
+  "Return the currently panel-owned source when it is still visible."
+  (cl-loop for window in (window-list nil 'no-minibuf)
+	   for buffer = (window-buffer window)
+	   for source = (and (buffer-live-p buffer)
+			     (buffer-local-value 'context-panels-source-buffer
+						 buffer))
+	   when (and (buffer-live-p source)
+		     (context-panels--visible-source-window source))
+	   return source))
+
 (defun context-panels--visible-source-buffer ()
   "Return the source that should currently drive visible panels.
-The selected ordinary source wins.  Selecting a context-panel auxiliary keeps its
-source active.  Ignored sidecars may keep the last source.  Other buffers hide
-panels instead of falling back to an unrelated visible source."
-  (or (context-panels--selected-source-buffer)
+Existing panels keep following their source while that source remains visible,
+even when point moves to the minibuffer, a side panel, or another visible
+ordinary buffer.  If the panel source disappeared from the visible layout, the
+selected ordinary source may take over.  Ignored sidecars may keep the last
+source.  Other buffers hide panels instead of falling back to an unrelated
+visible source."
+  (or (context-panels--visible-panel-source)
+      (context-panels--selected-source-buffer)
       (context-panels--selected-auxiliary-source-buffer)
       (and (context-panels--selected-ignored-source-buffer-p)
 	   (buffer-live-p context-panels--last-source-buffer)
+	   (context-panels--visible-source-window context-panels--last-source-buffer)
 	   context-panels--last-source-buffer)))
 
 (defun context-panels--visible-side-panel-window ()

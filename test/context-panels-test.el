@@ -750,6 +750,59 @@
       (setq context-panels--desired-bottom-view-id nil)
       (delete-other-windows))))
 
+(ert-deftest context-panels-keeps-panels-while-source-remains-visible ()
+  "Selecting another buffer does not hide panels while their source is visible."
+  (let ((source (get-buffer-create "*context-panels-test-visible-source*") )
+	(other (get-buffer-create "*context-panels-test-visible-other*")))
+    (unwind-protect
+	(progn
+	  (delete-other-windows)
+	  (switch-to-buffer source)
+	  (erase-buffer)
+	  (insert "source\n")
+	  (context-panels-mode 1)
+	  (context-panels-register-provider
+	   (list :name 'test
+		 :icon "🧪"
+		 :side-panel-buffer-name "*context-panels-test-visible-side*"
+		 :collect-side-items
+		 (lambda (_source)
+		   (list (list :id 'row :label "row")))
+		 :render-side-item
+		 (lambda (_source item)
+		   (insert (plist-get item :label) "\n"))
+		 :collect-bottom-views
+		 (lambda (_source)
+		   (list (list :id 'inspect :label "Inspect"
+			       :render (lambda (_source _view)
+					 (insert "bottom")))))))
+	  (split-window-right)
+	  (other-window 1)
+	  (switch-to-buffer other)
+	  (other-window -1)
+	  (context-panels-open source)
+	  (context-panels-open-bottom-view 'inspect source)
+	  (select-window (get-buffer-window other t))
+	  (context-panels-reconcile-windows)
+	  (should (context-panels--visible-source-window source))
+	  (should (context-panels--panel-window-for-source-p
+		   (context-panels--visible-side-panel-window) source))
+	  (should (context-panels--panel-window-for-source-p
+		   (context-panels--visible-bottom-panel-window) source)))
+      (dolist (name '("*context-panels-test-visible-side*"
+		      "*Context View: test/inspect*"))
+	(when (get-buffer name)
+	  (kill-buffer name)))
+      (when (buffer-live-p source)
+	(kill-buffer source))
+      (when (buffer-live-p other)
+	(kill-buffer other))
+      (setq context-panels--last-source-buffer nil)
+      (setq context-panels--temporarily-hidden-p nil)
+      (setq context-panels--desired-side-panel-p nil)
+      (setq context-panels--desired-bottom-view-id nil)
+      (delete-other-windows))))
+
 (ert-deftest context-panels-resyncs-to-reentered-source-with-panels ()
   "Switching between sources restores panels only for sources that wanted them."
   (let ((source-a (get-buffer-create "*context-panels-test-source-a*"))
