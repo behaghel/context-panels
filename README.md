@@ -78,6 +78,7 @@ Providers may expose one or more bottom views with `:collect-bottom-views`.  A b
 | `:mode` | Optional major mode enabled in the view buffer. |
 | `:render` | Function `(SOURCE-BUFFER VIEW)` that inserts the view contents. |
 | `:select` | Non-nil means opening this view selects its window. |
+| `:docked` | Non-nil makes an explicitly displayed view a persistent fallback in its frame. |
 
 Bottom views are opened explicitly; plain `context-panels-open` remains side-panel-only for compatibility.
 
@@ -90,6 +91,44 @@ Bottom views are opened explicitly; plain `context-panels-open` remains side-pan
 ```
 
 Each provider/view gets its own buffer, while one bottom window is visible by default.  Cycling or selecting another view swaps the visible bottom-window buffer and leaves the other view buffers available for reuse.
+
+### Docked fallback
+
+A docked bottom view remains available independently of its source's visibility
+or lifetime. When no source-specific bottom view occupies an open bottom slot,
+the most recently explicitly displayed, still-live docked buffer is shown.
+Source-specific views take precedence when their source returns. Automatic
+restoration does not change dock recency or select the bottom window.
+
+Dock history and explicit-close suppression belong to the displaying frame.
+Docking does not open a closed panel. Explicitly closing a bottom view suppresses
+automatic bottom restoration until a bottom view is explicitly opened again.
+Killing a docked buffer removes it from fallback candidates; the next live dock
+can take its place while the slot is open. `M-x context-panels-open-docked-view`
+reopens a previously displayed dock even after its source has been killed.
+
+Docked renderers accept nil as their source argument during fallback and must
+not depend on a surviving source. Views adopted with
+`context-panels-adopt-bottom-view-buffer` retain externally managed contents;
+fallback never erases or rerenders adopted buffers. Closing, hiding, or replacing
+a bottom view does not kill its buffer or stop work owned by that buffer.
+
+A minimal docked provider can be evaluated in a scratch buffer:
+
+```elisp
+(switch-to-buffer (get-buffer-create "*Dock example source*"))
+(text-mode)
+(context-panels-mode 1)
+(context-panels-register-provider
+ (list :name 'dock-example :icon "♫"
+       :collect-bottom-views
+       (lambda (_source)
+         (list (list :id 'player :label "Player" :docked t :height 6
+                     :render (lambda (_source _view) (insert "Persistent player")))
+               (list :id 'inspect :label "Inspect"
+                     :render (lambda (_source _view) (insert "Source inspector")))))))
+(context-panels-open-bottom-view 'player)
+```
 
 ## Key hints
 
