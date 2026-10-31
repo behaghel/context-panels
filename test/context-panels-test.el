@@ -1153,5 +1153,195 @@
      (context-panels--synced-focus-claim (current-buffer) '(:id item))
      :type 'user-error)))
 
+(defmacro context-panels-test--with-docks (&rest body)
+  "Run BODY with isolated source buffers, views, windows, and dock state."
+  (declare (indent 0) (debug t))
+  `(let* ((source-a (generate-new-buffer " *dock-source-a*"))
+	  (source-b (generate-new-buffer " *dock-source-b*"))
+	  (other (generate-new-buffer " *dock-other*"))
+	  (dock-a (generate-new-buffer " *dock-a*"))
+	  (dock-b (generate-new-buffer " *dock-b*"))
+	  (transient (generate-new-buffer " *dock-transient*"))
+	  (context-panels--last-source-buffer nil)
+	  (context-panels--desired-side-panel-p nil)
+	  (context-panels--desired-bottom-view-id nil)
+	  (context-panels--temporarily-hidden-p nil)
+	  (saved-docks (frame-parameter nil 'context-panels-docked-views))
+	  (saved-closed (frame-parameter nil 'context-panels-bottom-closed)))
+     (unwind-protect
+	 (save-window-excursion
+	   (set-frame-parameter nil 'context-panels-docked-views nil)
+	   (set-frame-parameter nil 'context-panels-bottom-closed nil)
+	   (delete-other-windows)
+	   (dolist (source (list source-a source-b))
+	     (with-current-buffer source
+	       (text-mode)
+	       (context-panels-mode 1)
+	       (context-panels-register-provider
+		(list :name 'dock-test :icon "music"
+		      :collect-bottom-views
+		      (lambda (_source)
+			(list (list :id 'a :docked t :buffer-name (buffer-name dock-a)
+				    :render (lambda (source _view)
+					      (insert (if source "A source" "A dock"))))
+			      (list :id 'b :docked t :buffer-name (buffer-name dock-b)
+				    :render (lambda (source _view)
+					      (insert (if source "B source" "B dock"))))
+			      (list :id 'transient :buffer-name (buffer-name transient)
+				    :render (lambda (_source _view) (insert "Transient")))))))))
+	   ,@body)
+       (dolist (buffer (list source-a source-b other dock-a dock-b transient))
+	 (when (buffer-live-p buffer) (kill-buffer buffer)))
+       (set-frame-parameter nil 'context-panels-docked-views saved-docks)
+       (set-frame-parameter nil 'context-panels-bottom-closed saved-closed))))
+
+(ert-deftest context-panels-dock-survives-hidden-and-killed-source ()
+  "A dock falls back without its source and preserves ordinary-window focus."
+  (context-panels-test--with-docks
+   (switch-to-buffer source-a)
+   (context-panels-open-bottom-view 'a source-a)
+   (switch-to-buffer other)
+   (let ((selected (selected-window)))
+     (context-panels-reconcile-windows)
+     (should (eq selected (selected-window)))
+     (should (get-buffer-window dock-a))
+     (with-current-buffer dock-a
+       (should-not context-panels-source-buffer)
+       (should (equal (buffer-string) "A dock"))))
+   (kill-buffer source-a)
+   (context-panels-reconcile-windows)
+   (should (get-buffer-window dock-a))
+   (with-current-buffer dock-a
+     (context-panels-refresh-bottom-view)
+     (should (equal (buffer-string) "A dock")))))
+
+(ert-deftest context-panels-dock-source-views-override-without-changing-recency ()
+  "Transient views override docks; restoring an older source does not promote it."
+  (context-panels-test--with-docks
+   (switch-to-buffer source-a)
+   (context-panels-open-bottom-view 'a source-a)
+   (switch-to-buffer source-b)
+   (context-panels-open-bottom-view 'b source-b)
+   (context-panels-open-bottom-view 'transient source-b)
+   (should (get-buffer-window transient))
+   (switch-to-buffer other)
+   (context-panels-reconcile-windows)
+   (should (get-buffer-window dock-b))
+   (switch-to-buffer source-a)
+   (context-panels-reconcile-windows)
+   (should (get-buffer-window dock-a))
+   (switch-to-buffer other)
+   (context-panels-reconcile-windows)
+   (should (get-buffer-window dock-b))))
+
+(ert-deftest context-panels-dock-explicit-close-does-not-resurrect ()
+  "Closing the fallback suppresses restoration even when its source returns."
+  (context-panels-test--with-docks
+   (switch-to-buffer source-a)
+   (context-panels-open-bottom-view 'a source-a)
+   (switch-to-buffer other)
+   (context-panels-reconcile-windows)
+   (select-window (get-buffer-window dock-a))
+   (call-interactively (key-binding (kbd "q")))
+   (context-panels-reconcile-windows)
+   (should-not (context-panels--visible-bottom-panel-window))
+   (switch-to-buffer source-a)
+   (context-panels-reconcile-windows)
+   (should-not (context-panels--visible-bottom-panel-window))
+   (context-panels-open-bottom-view 'a source-a)
+   (should (get-buffer-window dock-a))))
+
+(ert-deftest context-panels-dock-killed-buffer-falls-back-to-previous ()
+  "Killing the newest dock reveals the preceding live dock without selecting it."
+  (context-panels-test--with-docks
+   (switch-to-buffer source-a)
+   (context-panels-open-bottom-view 'a source-a)
+   (context-panels-open-bottom-view 'b source-a)
+   (switch-to-buffer other)
+   (context-panels-reconcile-windows)
+   (kill-buffer dock-b)
+   (context-panels-reconcile-windows)
+   (should (get-buffer-window dock-a))
+   (kill-buffer dock-a)
+   (context-panels-reconcile-windows)
+   (should-not (context-panels--visible-bottom-panel-window))))
+
+(ert-deftest context-panels-dock-adopted-buffer-keeps-contents ()
+  "An externally managed buffer survives fallback and refresh without erasure."
+  (context-panels-test--with-docks
+   (switch-to-buffer source-a)
+   (with-current-buffer dock-a (insert "Live playlist"))
+   (context-panels-adopt-bottom-view-buffer dock-a 'a source-a)
+   (switch-to-buffer other)
+   (context-panels-reconcile-windows)
+   (should (get-buffer-window dock-a))
+   (with-current-buffer dock-a
+     (context-panels-refresh-bottom-view)
+     (should (equal (buffer-string) "Live playlist")))))
+
+(ert-deftest context-panels-dock-automatic-restore-does-not-select ()
+  "A view's explicit selection preference does not steal focus on restoration."
+  (context-panels-test--with-docks
+   (with-current-buffer source-a
+     (let ((collect (plist-get (context-panels-registered-provider 'dock-test)
+			       :collect-bottom-views)))
+       (context-panels-register-provider
+	(list :name 'dock-test :icon "music"
+	      :collect-bottom-views
+	      (lambda (source)
+		(mapcar (lambda (view) (plist-put view :select t))
+			(funcall collect source)))))))
+   (switch-to-buffer source-a)
+   (context-panels-open-bottom-view 'a source-a)
+   (select-window (get-buffer-window source-a))
+   (switch-to-buffer other)
+   (context-panels-reconcile-windows)
+   (switch-to-buffer source-a)
+   (let ((selected (selected-window)))
+     (context-panels-reconcile-windows)
+     (should (eq selected (selected-window))))))
+
+(ert-deftest context-panels-dock-close-and-reopen-without-source ()
+  "A dock can be dismissed from the document and reopened after source death."
+  (context-panels-test--with-docks
+   (switch-to-buffer source-a)
+   (context-panels-open-bottom-view 'a source-a)
+   (switch-to-buffer other)
+   (kill-buffer source-a)
+   (context-panels-reconcile-windows)
+   (context-panels-close-bottom-view)
+   (context-panels-reconcile-windows)
+   (should-not (context-panels--visible-bottom-panel-window))
+   (context-panels-open-docked-view dock-a)
+   (should (get-buffer-window dock-a))))
+
+(ert-deftest context-panels-dock-history-is-frame-local ()
+  "Explicit history and dead-buffer pruning do not modify another frame's docks."
+  (let ((buffer-a (generate-new-buffer " *frame-dock-a*"))
+	(buffer-b (generate-new-buffer " *frame-dock-b*"))
+	(current 'frame-a)
+	parameters)
+    (unwind-protect
+	(cl-letf (((symbol-function 'frame-parameter)
+		   (lambda (frame parameter)
+		     (alist-get (cons (or frame current) parameter)
+				parameters nil nil #'equal)))
+		  ((symbol-function 'set-frame-parameter)
+		   (lambda (frame parameter value)
+		     (setf (alist-get (cons (or frame current) parameter)
+				      parameters nil nil #'equal) value))))
+	  (context-panels--remember-docked-view buffer-a '(:id a :docked t) 8)
+	  (setq current 'frame-b)
+	  (context-panels--remember-docked-view buffer-b '(:id b :docked t) 12)
+	  (should (eq buffer-b (plist-get (car (context-panels--docked-views)) :buffer)))
+	  (setq current 'frame-a)
+	  (should (eq buffer-a (plist-get (car (context-panels--docked-views)) :buffer)))
+	  (kill-buffer buffer-a)
+	  (should-not (context-panels--docked-views))
+	  (should (eq buffer-b (plist-get (car (context-panels--docked-views 'frame-b))
+					  :buffer))))
+      (dolist (buffer (list buffer-a buffer-b))
+	(when (buffer-live-p buffer) (kill-buffer buffer))))))
+
 (provide 'context-panels-test)
 ;;; context-panels-test.el ends here

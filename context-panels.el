@@ -150,6 +150,15 @@ file is an auxiliary sidecar or generated artifact rather than a source file.")
 (defvar-local context-panels--rendered-source-items nil
   "Source-local (CHAR-TICK . ITEMS) snapshot from the last side render.")
 
+(defvar context-panels--automatic-bottom-display nil
+  "Non-nil while restoring bottom views without changing explicit dock history.")
+
+(defvar-local context-panels--docked-fallback-p nil
+  "Non-nil when this buffer is displayed independently of its source.")
+
+(defvar-local context-panels--adopted-bottom-buffer-p nil
+  "Non-nil when bottom-view contents are managed outside context panels.")
+
 (defvar context-panels--render-raw-items nil
   "Dynamically scoped (SOURCE . ITEMS) snapshot during one side render.")
 
@@ -210,15 +219,14 @@ file is an auxiliary sidecar or generated artifact rather than a source file.")
 (define-derived-mode context-panels-buffer-mode special-mode "Context"
   "Major mode for generic context side panel buffers.")
 
+(define-key context-panels-buffer-mode-map (kbd "q")
+	    #'context-panels-close-current-window)
+
 (defun context-panels-close-current-window ()
   "Close the current context-panel auxiliary window."
   (interactive)
   (cond
-   ((and context-panels-view-id
-	 (eq (current-buffer)
-	     (and (buffer-live-p context-panels-source-buffer)
-		  (buffer-local-value 'context-panels-bottom-panel-buffer
-				      context-panels-source-buffer))))
+   (context-panels-view-id
     (context-panels-close-bottom-view))
    ((and (not context-panels-view-id)
 	 (buffer-live-p context-panels-source-buffer))
@@ -1368,14 +1376,74 @@ keeps a stable bottom window size."
       (context-panels-buffer-mode)))))
 
 (defun context-panels-render-bottom-view (source-buffer view)
-  "Render bottom VIEW for SOURCE-BUFFER in the current buffer."
-  (let ((inhibit-read-only t))
-    (erase-buffer)
-    (when-let* ((function (plist-get view :render)))
-      (funcall function source-buffer view))
-    (when (= (buffer-size) 0)
-      (insert (format "Context view: %s\n" (plist-get view :id))))
-    (goto-char (point-min))))
+  "Render bottom VIEW for SOURCE-BUFFER in the current buffer.
+SOURCE-BUFFER may be nil for a docked fallback.  Adopted buffers retain their
+externally managed contents."
+  (unless context-panels--adopted-bottom-buffer-p
+    (let ((inhibit-read-only t))
+      (erase-buffer)
+      (when-let* ((function (plist-get view :render)))
+	(funcall function source-buffer view))
+      (when (= (buffer-size) 0)
+	(insert (format "Context view: %s\n" (plist-get view :id))))
+      (goto-char (point-min)))))
+
+(defun context-panels--docked-views (&optional frame)
+  "Return live dock entries for FRAME, newest explicit display first."
+  (let ((entries (cl-remove-if-not
+		  (lambda (entry) (buffer-live-p (plist-get entry :buffer)))
+		  (frame-parameter frame 'context-panels-docked-views))))
+    (set-frame-parameter frame 'context-panels-docked-views entries)
+    entries))
+
+(defun context-panels--remember-docked-view (buffer view height)
+  "Remember explicit display of docked BUFFER with VIEW and HEIGHT in this frame."
+  (unless context-panels--automatic-bottom-display
+    (set-frame-parameter nil 'context-panels-bottom-closed nil)
+    (when (plist-get view :docked)
+      (set-frame-parameter
+       nil 'context-panels-docked-views
+       (cons (list :buffer buffer :view (copy-sequence view) :height height)
+	     (cl-remove buffer (context-panels--docked-views)
+			:key (lambda (entry) (plist-get entry :buffer))))))))
+
+(defun context-panels--restore-docked-view ()
+  "Restore this frame's newest live dock when its bottom slot is available."
+  (unless (or (frame-parameter nil 'context-panels-bottom-closed)
+	      (context-panels--visible-bottom-panel-window))
+    (when-let* ((entry (car (context-panels--docked-views))))
+      (context-panels--display-docked-view entry))))
+
+(defun context-panels--display-docked-view (entry &optional select)
+  "Display dock ENTRY without a source, optionally SELECT its window."
+  (let ((buffer (plist-get entry :buffer))
+	(view (plist-get entry :view)))
+    (with-current-buffer buffer
+      (setq context-panels-source-buffer nil
+	    context-panels--docked-fallback-p t)
+      (context-panels-render-bottom-view nil view))
+    (context-panels--display-bottom-panel-window
+     buffer nil (plist-get entry :height) select)
+    buffer))
+
+;;;###autoload
+(defun context-panels-open-docked-view (buffer &optional select)
+  "Reopen this frame's docked BUFFER, optionally SELECT its window.
+This works after the original source has been killed."
+  (interactive
+   (list (completing-read "Docked view: "
+			  (mapcar (lambda (entry)
+				    (buffer-name (plist-get entry :buffer)))
+				  (context-panels--docked-views))
+			  nil t)
+	 t))
+  (let* ((buffer (get-buffer buffer))
+	 (entry (cl-find buffer (context-panels--docked-views)
+			 :key (lambda (entry) (plist-get entry :buffer)))))
+    (unless entry (user-error "No live docked view for this buffer"))
+    (prog1 (context-panels--display-docked-view entry select)
+      (context-panels--remember-docked-view
+       buffer (plist-get entry :view) (plist-get entry :height)))))
 
 (defun context-panels--auxiliary-window-p (window)
   "Return non-nil when WINDOW is a context-panel auxiliary window."
@@ -1486,8 +1554,7 @@ visible source."
   (cl-find-if
    (lambda (window)
      (with-current-buffer (window-buffer window)
-       (and (buffer-live-p context-panels-source-buffer)
-	    context-panels-view-id)))
+       context-panels-view-id))
    (window-list nil 'no-minibuf)))
 
 (defun context-panels--cleanup-auxiliary (source-buffer)
@@ -1504,7 +1571,9 @@ visible source."
   (when-let* ((window (context-panels--visible-side-panel-window)))
     (context-panels--close-side-panel-buffer (window-buffer window) t))
   (when-let* ((window (context-panels--visible-bottom-panel-window)))
-    (context-panels--close-bottom-view-buffer (window-buffer window) t))
+    (unless (buffer-local-value 'context-panels--docked-fallback-p
+				(window-buffer window))
+      (context-panels--close-bottom-view-buffer (window-buffer window) t)))
   (when (buffer-live-p context-panels--last-source-buffer)
     (context-panels--cleanup-auxiliary context-panels--last-source-buffer)))
 
@@ -1550,6 +1619,7 @@ editable prompt point that reconciliation must not disturb."
 		     (context-panels--visible-side-panel-window) source-buffer)))
       (context-panels-open source-buffer))
     (when (and bottom-view-id
+	       (not (frame-parameter nil 'context-panels-bottom-closed))
 	       (not (context-panels--panel-window-for-source-p
 		     (context-panels--visible-bottom-panel-window) source-buffer))
 	       (context-panels-bottom-view bottom-view-id source-buffer))
@@ -1560,21 +1630,24 @@ editable prompt point that reconciliation must not disturb."
   "Reconcile visible context panels with the current visible source."
   (unless context-panels--reconciling
     (let ((context-panels--reconciling t)
+	  (context-panels--automatic-bottom-display t)
 	  (selected (selected-window)))
       (unwind-protect
-	  (if-let* ((source (context-panels--visible-source-buffer)))
-	      (progn
-		(setq context-panels--last-source-buffer source)
-		(if (context-panels--source-wants-panels-p source)
-		    (progn
-		      (context-panels--restore-desired-panels source)
-		      (setq context-panels--temporarily-hidden-p nil))
-		  (when (or (context-panels--visible-side-panel-window)
-			    (context-panels--visible-bottom-panel-window))
-		    (context-panels--hide-visible-panels))))
-	    (when (or (context-panels--visible-side-panel-window)
-		      (context-panels--visible-bottom-panel-window))
-	      (context-panels--hide-visible-panels)))
+	  (progn
+	    (if-let* ((source (context-panels--visible-source-buffer)))
+		(progn
+		  (setq context-panels--last-source-buffer source)
+		  (if (context-panels--source-wants-panels-p source)
+		      (progn
+			(context-panels--restore-desired-panels source)
+			(setq context-panels--temporarily-hidden-p nil))
+		    (when (or (context-panels--visible-side-panel-window)
+			      (context-panels--visible-bottom-panel-window))
+		      (context-panels--hide-visible-panels))))
+	      (when (or (context-panels--visible-side-panel-window)
+			(context-panels--visible-bottom-panel-window))
+		(context-panels--hide-visible-panels)))
+	    (context-panels--restore-docked-view))
 	(when (window-live-p selected)
 	  (select-window selected))))))
 
@@ -1603,8 +1676,8 @@ editable prompt point that reconciliation must not disturb."
 (defun context-panels--panel-buffer-p (buffer)
   "Return non-nil when BUFFER is an `context-panels' panel buffer."
   (with-current-buffer buffer
-    (and (buffer-live-p context-panels-source-buffer)
-	 t)))
+    (or context-panels-view-id
+	(buffer-live-p context-panels-source-buffer))))
 
 (defun context-panels--provider-follow-source-p (provider source-buffer)
   "Return non-nil when PROVIDER should follow SOURCE-BUFFER."
@@ -1720,7 +1793,7 @@ editable prompt point that reconciliation must not disturb."
 	     . ((no-other-window . t)
 		(no-delete-other-windows . t)))))))
     (context-panels-protect-window window panel-buffer source-buffer)
-    (when select
+    (when (and select (not context-panels--automatic-bottom-display))
       (select-window window))
     window))
 
@@ -1738,11 +1811,14 @@ When SELECT is non-nil, select the bottom view window after rendering."
       (unless (eq (window-buffer window) panel-buffer)
 	(delete-window window)))
     (with-current-buffer panel-buffer
-      (context-panels--bottom-view-mode view)
+      (unless context-panels--adopted-bottom-buffer-p
+	(context-panels--bottom-view-mode view))
+      (setq context-panels--docked-fallback-p nil)
       (setq context-panels-source-buffer source)
       (setq context-panels-view-id (plist-get view :id))
       (setq context-panels-view-key (plist-get view :context-panels-view-key))
       (context-panels-render-bottom-view source view))
+    (context-panels--remember-docked-view panel-buffer view height)
     (with-current-buffer source
       (setq context-panels-bottom-panel-buffer panel-buffer)
       (setq context-panels-bottom-view-desired-id
@@ -1767,9 +1843,12 @@ buffers, such as compilation buffers, whose contents are managed externally."
 	 (panel-buffer (get-buffer-create buffer))
 	 (height (context-panels--bottom-view-height source)))
     (with-current-buffer panel-buffer
+      (setq context-panels--adopted-bottom-buffer-p t
+	    context-panels--docked-fallback-p nil)
       (setq context-panels-source-buffer source)
       (setq context-panels-view-id (plist-get view :id))
       (setq context-panels-view-key (plist-get view :context-panels-view-key)))
+    (context-panels--remember-docked-view panel-buffer view height)
     (with-current-buffer source
       (setq context-panels-bottom-panel-buffer panel-buffer)
       (setq context-panels-bottom-view-desired-id
@@ -1786,17 +1865,25 @@ buffers, such as compilation buffers, whose contents are managed externally."
 (defun context-panels-refresh-bottom-view ()
   "Refresh the current generic bottom context view."
   (interactive)
-  (let* ((source (context-panels--source-buffer))
-	 (view-id (or context-panels-view-key
-		      context-panels-view-id
-		      (user-error "No context bottom view associated with buffer"))))
-    (context-panels-open-bottom-view view-id source)))
+  (if context-panels--docked-fallback-p
+      (let* ((entry (cl-find (current-buffer) (context-panels--docked-views)
+			     :key (lambda (entry) (plist-get entry :buffer))))
+	     (view (plist-get entry :view)))
+	(unless view (user-error "No docked view associated with buffer"))
+	(context-panels-render-bottom-view nil view))
+    (let* ((source (context-panels--source-buffer))
+	   (view-id (or context-panels-view-key
+			context-panels-view-id
+			(user-error "No context bottom view associated with buffer")))
+	   (context-panels--automatic-bottom-display t))
+      (context-panels-open-bottom-view view-id source))))
 
 ;;;###autoload
 (defun context-panels--close-bottom-view-buffer (panel-buffer &optional preserve-desire)
   "Close bottom PANEL-BUFFER.
 When PRESERVE-DESIRE is non-nil, keep workspace desired-bottom state."
   (unless preserve-desire
+    (set-frame-parameter nil 'context-panels-bottom-closed t)
     (setq context-panels--desired-bottom-view-id nil))
   (when (buffer-live-p panel-buffer)
     (let ((source (buffer-local-value 'context-panels-source-buffer
@@ -1811,16 +1898,19 @@ When PRESERVE-DESIRE is non-nil, keep workspace desired-bottom state."
 	    (setq context-panels-bottom-view-desired-id nil)))))))
 
 (defun context-panels-close-bottom-view ()
-  "Close the generic bottom context view for the current source."
+  "Close the current source's bottom view or the visible docked fallback."
   (interactive)
-  (let* ((source (context-panels--source-buffer))
-	 (panel-buffer (or (and context-panels-view-id (current-buffer))
-			   (and (buffer-live-p
-				 (buffer-local-value 'context-panels-bottom-panel-buffer
-						     source))
-				(buffer-local-value 'context-panels-bottom-panel-buffer
-						    source)))))
-    (when panel-buffer
+  (let* ((window (context-panels--visible-bottom-panel-window))
+	 (fallback (and window
+			(buffer-local-value 'context-panels--docked-fallback-p
+					    (window-buffer window))
+			(window-buffer window)))
+	 (panel-buffer
+	  (or (and context-panels-view-id (current-buffer))
+	      fallback
+	      (buffer-local-value 'context-panels-bottom-panel-buffer
+				  (context-panels--source-buffer)))))
+    (when (buffer-live-p panel-buffer)
       (context-panels--close-bottom-view-buffer panel-buffer))))
 
 (defun context-panels-cleanup-source-overlays ()
