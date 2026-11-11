@@ -11,6 +11,7 @@
 
 (defvar context-panels-source-buffer)
 (defvar context-panels-view-id)
+(defvar context-panels-view-navigation-mode-map)
 (defvar-local context-panels-footer-spec nil "Current bottom view descriptor.")
 (defvar-local context-panels-footer--signature nil "Last native footer presentation.")
 (defvar context-panels-footer--resize-timer nil "Deferred footer reflow after native window changes.")
@@ -105,7 +106,10 @@
       (goto-char (point-min)))
     ;; Only this control buffer overrides editing maps.  Ordinary body maps,
     ;; Evil states and minibuffer typing remain untouched; copying text works.
-    (set-keymap-parent map special-mode-map)
+    (set-keymap-parent map
+		       (if (boundp 'context-panels-view-navigation-mode-map)
+			   (make-composed-keymap context-panels-view-navigation-mode-map special-mode-map)
+			 special-mode-map))
     (use-local-map map)
     (setq-local overriding-local-map map)))
 

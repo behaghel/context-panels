@@ -130,6 +130,35 @@ A minimal docked provider can be evaluated in a scratch buffer:
 (context-panels-open-bottom-view 'player)
 ```
 
+## Native provider tabs and navigation
+
+The bottom panel has a native Emacs tab line for all available provider views,
+not an application-specific buffer header. Active views have theme-derived
+emphasis; inactive views remain quiet. Native horizontal scrolling keeps a long
+view list usable. The `Views · C-c v` chooser is right-aligned, separate from the
+left-aligned provider tabs. Painting the bar reads a retained view snapshot and never
+collects providers, creates a buffer, renders a view or executes an action.
+
+`C-Tab` selects the next view, `C-S-Tab` the previous view, and `C-c v` selects by
+name using ordinary completion (including Vertico when enabled). These bindings
+apply only in managed panel windows, not ordinary copies of adopted buffers or
+minibuffers. Existing commands `context-panels-next-bottom-view` and
+`context-panels-select-bottom-view` share the same identity-based navigation;
+`context-panels-previous-bottom-view` provides the reverse direction.
+
+Provider/view keys, not labels or indexes, identify tabs. Duplicate labels are
+disambiguated in completion. Moving through or cancelling the chooser is passive.
+Explicit selection preserves view point, scrolling and adopted-buffer contents;
+keyboard navigation originating in a panel keeps focus in the replacement panel.
+Selecting a view does not start playback, initialize an account or enable capture.
+Closed side panels stay closed; existing declared synchronized-focus behavior is
+preserved rather than inventing a new side-panel authority.
+
+A view may supply `:buffer` with an already live buffer instead of `:buffer-name`
+and `:render`. Such a buffer is adopted, never erased or recreated. The provider
+is responsible for offering only valid existing buffers. View snapshots refresh
+when a view is displayed or its source provider registry changes.
+
 ## Fixed bottom-view footer
 
 Every bottom view has a native footer at the bottom edge of its panel, separate
