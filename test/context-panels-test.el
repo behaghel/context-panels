@@ -528,7 +528,7 @@
 			       :render (lambda (_source _view) (insert "tall")))))))
 	  (let* ((panel-buffer (context-panels-open-bottom-view 'short source))
 		 (window (get-buffer-window panel-buffer t)))
-	    (should (= 13 (window-total-height window)))))
+	    (should (= 13 (window-total-height (or (window-atom-root window) window))))))
       (dolist (name '("*Context View: test/short*" "*Context View: test/tall*"))
 	(when (get-buffer name)
 	  (kill-buffer name)))

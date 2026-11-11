@@ -130,6 +130,35 @@ A minimal docked provider can be evaluated in a scratch buffer:
 (context-panels-open-bottom-view 'player)
 ```
 
+## Fixed bottom-view footer
+
+Every bottom view has a native footer at the bottom edge of its panel, separate
+from its scrollable content. Scrolling and sorting the content do not scroll the
+footer. The content and footer form one protected window group: switching or
+closing the view never leaves an orphan footer or changes an ordinary source
+window. Footer drawing preserves body point, scrolling and selected-window focus.
+
+A view or its provider may declare `:footer`, a function `(SOURCE-BUFFER VIEW)`
+called in the body buffer. It returns a plist with optional `:actions` and
+`:metadata`. The callback reads retained presentation state only; rendering never
+executes actions, fetches data or requests authorization. With no declaration, the
+footer offers the generic `q Close` action.
+
+Actions are plists with `:key`, `:label`, and interactive `:command`. Optional
+`:primary` emphasizes the primary action; `:select` allows an explicit navigation
+command to select its destination. Commands run in the body buffer and window,
+not in the footer's buffer. Declaring a footer does not rebind the body's keys.
+
+Metadata is optional text, such as a count and duration. It is right-aligned when
+space permits and receives its own line when needed. Action keys are accented,
+labels are neutral, and primary actions use a theme-derived success face. The
+footer has a background-only surface, 16-pixel separation above it and 8-pixel
+inner padding in graphical frames. Terminal frames retain native text controls.
+
+`context-panels-footer-update` refreshes the footer of a visible body buffer
+without opening a closed view or changing focus. The shared presentation has no
+application-specific music, queue, account or transport behavior.
+
 ## Key hints
 
 Use `context-panels-propertize-key` to highlight embedded command keys in labels or action text.  It applies `context-panels-key-hint-face` to the first matching key string:

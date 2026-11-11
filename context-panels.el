@@ -18,6 +18,7 @@
 (require 'cl-lib)
 (require 'seq)
 (require 'subr-x)
+(require 'context-panels-footer)
 
 (defgroup context-panels nil
   "Reusable context panel mechanics."
@@ -520,7 +521,7 @@ Signal `user-error' when multiple providers claim the same item."
 	       (claim (and item
 			   (context-panels--synced-focus-claim source item))))
 	  (when claim
-	    (pcase-let ((`(,provider ,contract ,key) claim))
+	    (pcase-let ((`(,_provider ,contract ,key) claim))
 	      (let ((context-panels--syncing-focus t)
 		    (current (funcall (plist-get contract :current-key) source)))
 		(unless (equal current key)
@@ -1322,6 +1323,8 @@ When PRESERVE-DESIRE is non-nil, keep workspace desired-panel state."
 	     (mapcar (lambda (view)
 		       (let ((copy (copy-sequence view))
 			     (provider-name (plist-get provider :name)))
+			 (unless (plist-member copy :footer)
+			   (plist-put copy :footer (plist-get provider :footer)))
 			 (plist-put copy :provider provider-name)
 			 (plist-put copy :context-panels-view-key
 				    (cons provider-name (plist-get view :id)))))
@@ -1379,6 +1382,7 @@ keeps a stable bottom window size."
   "Render bottom VIEW for SOURCE-BUFFER in the current buffer.
 SOURCE-BUFFER may be nil for a docked fallback.  Adopted buffers retain their
 externally managed contents."
+  (setq context-panels-footer-spec view)
   (unless context-panels--adopted-bottom-buffer-p
     (let ((inhibit-read-only t))
       (erase-buffer)
@@ -1779,20 +1783,23 @@ editable prompt point that reconciliation must not disturb."
   "Display PANEL-BUFFER as SOURCE-BUFFER's bottom panel with HEIGHT."
   (when-let* ((window (context-panels--visible-bottom-panel-window)))
     (unless (eq (window-buffer window) panel-buffer)
-      (delete-window window)))
+      (context-panels-footer-delete-view window)))
   (when-let* ((window (get-buffer-window panel-buffer t)))
     (unless (eq window (context-panels--visible-bottom-panel-window))
-      (delete-window window)))
+      (context-panels-footer-delete-view window)))
   (let ((window
-	 (display-buffer-in-side-window
-	  panel-buffer
-	  `((side . bottom)
-	    (slot . 1)
-	    (window-height . ,height)
-	    (window-parameters
-	     . ((no-other-window . t)
-		(no-delete-other-windows . t)))))))
+	 (or (when-let* ((footer (context-panels-footer-window panel-buffer)))
+	       (window-parameter footer 'context-panels-footer-body))
+	     (display-buffer-in-side-window
+	      panel-buffer
+	      `((side . bottom)
+		(slot . 1)
+		(window-height . ,height)
+		(window-parameters
+		 . ((no-other-window . t)
+		    (no-delete-other-windows . t))))))))
     (context-panels-protect-window window panel-buffer source-buffer)
+    (context-panels-footer-update panel-buffer)
     (when (and select (not context-panels--automatic-bottom-display))
       (select-window window))
     window))
@@ -1809,7 +1816,7 @@ When SELECT is non-nil, select the bottom view window after rendering."
 	 (panel-buffer (get-buffer-create buffer-name)))
     (when-let* ((window (context-panels--visible-bottom-panel-window)))
       (unless (eq (window-buffer window) panel-buffer)
-	(delete-window window)))
+	(context-panels-footer-delete-view window)))
     (with-current-buffer panel-buffer
       (unless context-panels--adopted-bottom-buffer-p
 	(context-panels--bottom-view-mode view))
@@ -1844,6 +1851,7 @@ buffers, such as compilation buffers, whose contents are managed externally."
 	 (height (context-panels--bottom-view-height source)))
     (with-current-buffer panel-buffer
       (setq context-panels--adopted-bottom-buffer-p t
+	    context-panels-footer-spec view
 	    context-panels--docked-fallback-p nil)
       (setq context-panels-source-buffer source)
       (setq context-panels-view-id (plist-get view :id))
@@ -1889,7 +1897,7 @@ When PRESERVE-DESIRE is non-nil, keep workspace desired-bottom state."
     (let ((source (buffer-local-value 'context-panels-source-buffer
 				      panel-buffer)))
       (when-let* ((window (get-buffer-window panel-buffer)))
-	(delete-window window))
+	(context-panels-footer-delete-view window))
       (bury-buffer panel-buffer)
       (when (buffer-live-p source)
 	(with-current-buffer source
@@ -2096,7 +2104,8 @@ MOUSE-FACE, PRIORITY, and PROPERTIES customize the marker.  POSITION defaults to
 (defun context-panels-marker-position (overlay &optional fallback-predicate)
   "Return top marker OVERLAY position, or fallback default position.
 When OVERLAY is live, return its start position.  Otherwise, if
-FALLBACK-PREDICATE returns non-nil, return `context-panels-default-marker-position'."
+FALLBACK-PREDICATE returns non-nil, return
+`context-panels-default-marker-position'."
   (cond
    ((overlayp overlay)
     (overlay-start overlay))
