@@ -130,6 +130,64 @@ A minimal docked provider can be evaluated in a scratch buffer:
 (context-panels-open-bottom-view 'player)
 ```
 
+## Native provider tabs and navigation
+
+The bottom panel has a native Emacs tab line for all available provider views,
+not an application-specific buffer header. Active views have theme-derived
+emphasis; inactive views remain quiet. Native horizontal scrolling keeps a long
+view list usable. The `Views · C-c v` chooser is right-aligned, separate from the
+left-aligned provider tabs. Painting the bar reads a retained view snapshot and never
+collects providers, creates a buffer, renders a view or executes an action.
+
+`C-Tab` selects the next view, `C-S-Tab` the previous view, and `C-c v` selects by
+name using ordinary completion (including Vertico when enabled). These bindings
+apply only in managed panel windows, not ordinary copies of adopted buffers or
+minibuffers. Existing commands `context-panels-next-bottom-view` and
+`context-panels-select-bottom-view` share the same identity-based navigation;
+`context-panels-previous-bottom-view` provides the reverse direction.
+
+Provider/view keys, not labels or indexes, identify tabs. Duplicate labels are
+disambiguated in completion. Moving through or cancelling the chooser is passive.
+Explicit selection preserves view point, scrolling and adopted-buffer contents;
+keyboard navigation originating in a panel keeps focus in the replacement panel.
+Selecting a view does not start playback, initialize an account or enable capture.
+Closed side panels stay closed; existing declared synchronized-focus behavior is
+preserved rather than inventing a new side-panel authority.
+
+A view may supply `:buffer` with an already live buffer instead of `:buffer-name`
+and `:render`. Such a buffer is adopted, never erased or recreated. The provider
+is responsible for offering only valid existing buffers. View snapshots refresh
+when a view is displayed or its source provider registry changes.
+
+## Fixed bottom-view footer
+
+Every bottom view has a native footer at the bottom edge of its panel, separate
+from its scrollable content. Scrolling and sorting the content do not scroll the
+footer. The content and footer form one protected window group: switching or
+closing the view never leaves an orphan footer or changes an ordinary source
+window. Footer drawing preserves body point, scrolling and selected-window focus.
+
+A view or its provider may declare `:footer`, a function `(SOURCE-BUFFER VIEW)`
+called in the body buffer. It returns a plist with optional `:actions` and
+`:metadata`. The callback reads retained presentation state only; rendering never
+executes actions, fetches data or requests authorization. With no declaration, the
+footer offers the generic `q Close` action.
+
+Actions are plists with `:key`, `:label`, and interactive `:command`. Optional
+`:primary` emphasizes the primary action; `:select` allows an explicit navigation
+command to select its destination. Commands run in the body buffer and window,
+not in the footer's buffer. Declaring a footer does not rebind the body's keys.
+
+Metadata is optional text, such as a count and duration. It is right-aligned when
+space permits and receives its own line when needed. Action keys are accented,
+labels are neutral, and primary actions use a theme-derived success face. The
+footer has a background-only surface, 16-pixel separation above it and 8-pixel
+inner padding in graphical frames. Terminal frames retain native text controls.
+
+`context-panels-footer-update` refreshes the footer of a visible body buffer
+without opening a closed view or changing focus. The shared presentation has no
+application-specific music, queue, account or transport behavior.
+
 ## Key hints
 
 Use `context-panels-propertize-key` to highlight embedded command keys in labels or action text.  It applies `context-panels-key-hint-face` to the first matching key string:
