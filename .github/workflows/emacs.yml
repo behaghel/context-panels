@@ -1,0 +1,44 @@
+name: Emacs checks
+
+on:
+  pull_request:
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  emacs:
+    name: ERT and byte compilation (Emacs 30.2)
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        with:
+          persist-credentials: false
+      - uses: purcell/setup-emacs@34c6ded44899fd1bf74d2889558befd1750e61a7
+        with:
+          version: '30.2'
+      - name: Run all ERT suites and compile libraries
+        shell: bash
+        run: |
+          set -euo pipefail
+          check_home=$(mktemp -d)
+          compile_output=$(mktemp -d)
+          trap 'rm -rf "$check_home" "$compile_output"' EXIT
+          export HOME="$check_home" COMPILE_OUTPUT="$compile_output"
+          emacs --version
+          emacs --batch -Q -L . -l ert \
+            --eval '(let ((files (directory-files "test" t "-test\\.el$"))) (unless files (error "No ERT suites found")) (dolist (file files) (load file nil t)))' \
+            --eval '(unless (ert-select-tests t t) (error "No ERT tests registered"))' \
+            -f ert-run-tests-batch-and-exit
+          emacs --batch -Q -L . \
+            --eval '(progn (require (quote context-panels)) (require (quote context-panels-org)))' \
+            --eval '(setq byte-compile-error-on-warn t byte-compile-dest-file-function (lambda (file) (expand-file-name (concat (file-name-nondirectory file) "c") (getenv "COMPILE_OUTPUT"))))' \
+            -f batch-byte-compile context-panels*.el
