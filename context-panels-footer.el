@@ -13,6 +13,7 @@
 (defvar context-panels-view-id)
 (defvar context-panels-view-navigation-mode-map)
 (defvar-local context-panels-footer-spec nil "Current bottom view descriptor.")
+(defvar-local context-panels-footer--body-buffer nil "Retained body identity for same-session window restoration.")
 (defvar-local context-panels-footer--signature nil "Last native footer presentation.")
 (defvar context-panels-footer--resize-timer nil "Deferred footer reflow after native window changes.")
 (declare-function context-panels-close-bottom-view "context-panels" ())
@@ -113,34 +114,79 @@
     (use-local-map map)
     (setq-local overriding-local-map map)))
 
+(defun context-panels-footer--owned-pair-p (body footer)
+  "Return non-nil when BODY and FOOTER are the only children of one group."
+  (let ((root (window-parent body)))
+    (and root (window-live-p footer)
+	 (eq root (window-parent footer))
+	 (eq (window-child root) body)
+	 (eq (window-next-sibling body) footer)
+	 (not (window-next-sibling footer)))))
+
+(defun context-panels-footer-restore-window (body)
+  "Rebind BODY to its retained footer after native window-state restoration.
+Only an exact owned sibling pair may recover missing window links.  Never
+adopt ordinary buffer copies, create windows or run provider actions."
+  (when (and (window-live-p body) (window-parameter body 'context-panels-protected))
+    (let* ((buffer (window-buffer body))
+	   (current (window-parameter body 'context-panels-footer-window))
+	   (footer (if (and (window-live-p current)
+			    (window-parameter current 'context-panels-protected)
+			    (eq (window-parameter current 'context-panels-footer-body) body)
+			    (with-current-buffer (window-buffer current)
+			      (and (derived-mode-p 'context-panels-footer-mode)
+				   (or (null context-panels-footer--body-buffer)
+				       (eq context-panels-footer--body-buffer buffer)))))
+		       current
+		     (let ((candidates
+			    (cl-remove-if-not
+			     (lambda (window)
+			       (and (window-parameter window 'context-panels-protected)
+				    (with-current-buffer (window-buffer window)
+				      (and (derived-mode-p 'context-panels-footer-mode)
+					   (eq context-panels-footer--body-buffer buffer)))))
+			     (window-list (window-frame body) 'no-minibuf))))
+		       (when candidates
+			 (let ((candidate (car candidates)))
+			   (unless (and (= (length candidates) 1)
+					(context-panels-footer--owned-pair-p body candidate))
+			     (user-error "Panel footer layout changed; leaving unrelated windows intact"))
+			   candidate))))))
+      (when footer
+	(with-current-buffer (window-buffer footer) (setq context-panels-footer--body-buffer buffer))
+	(set-window-parameter body 'context-panels-footer-window footer)
+	(set-window-parameter footer 'context-panels-footer-body body)
+	(context-panels-protect-window footer (window-buffer footer)
+				       (buffer-local-value 'context-panels-source-buffer buffer))
+	(set-window-parameter body 'mode-line-format 'none)
+	(set-window-parameter footer 'mode-line-format 'none)
+	(set-window-parameter footer 'header-line-format 'none)
+	(set-window-parameter footer 'tab-line-format 'none)
+	footer))))
+
 (defun context-panels-footer-delete-view (body)
   "Delete BODY and its owned footer together, even without native atom flags.
 Never delete a surrounding group containing an unrelated window."
-  (let ((footer (window-parameter body 'context-panels-footer-window)))
+  (let ((footer (context-panels-footer-restore-window body)))
     (if (not (window-live-p footer))
 	(delete-window body)
       (let ((root (window-parent body)))
 	(unless (and (eq (window-parameter footer 'context-panels-footer-body) body)
-		     (eq root (window-parent footer))
-		     (eq (window-child root) body)
-		     (eq (window-next-sibling body) footer)
-		     (not (window-next-sibling footer)))
+		     (context-panels-footer--owned-pair-p body footer))
 	  (user-error "Panel footer layout changed; leaving unrelated windows intact"))
 	(delete-window root)))))
 
 (defun context-panels-footer--body-killed ()
   "Close owned atomic groups before Emacs replaces a killed body's buffer."
   (dolist (body (get-buffer-window-list (current-buffer) nil t))
-    (when-let* ((footer (window-parameter body 'context-panels-footer-window))
-		((window-live-p footer)))
+    (when-let* ((footer (context-panels-footer-restore-window body)))
       (let ((buffer (window-buffer footer)))
 	(context-panels-footer-delete-view body)
 	(when (buffer-live-p buffer) (kill-buffer buffer))))))
 
 (defun context-panels-footer--ensure (body)
   "Create BODY's native footer without resizing the overall panel group."
-  (or (let ((footer (window-parameter body 'context-panels-footer-window)))
-	(when (window-live-p footer) footer))
+  (or (context-panels-footer-restore-window body)
       (let* ((frame (window-frame body))
 	     (buffer (get-buffer-create (format " *Context Footer:%s:%s*" (buffer-name (window-buffer body)) frame)))
 	     (side (window-parameter body 'window-side))
@@ -151,7 +197,8 @@ Never delete a surrounding group containing an unrelated window."
 	(with-current-buffer (window-buffer body)
 	  (add-hook 'kill-buffer-hook #'context-panels-footer--body-killed nil t))
 	(with-current-buffer buffer
-	  (unless (derived-mode-p 'context-panels-footer-mode) (context-panels-footer-mode)))
+	  (unless (derived-mode-p 'context-panels-footer-mode) (context-panels-footer-mode))
+	  (setq context-panels-footer--body-buffer (window-buffer body)))
 	;; The public atomic-window API splits the side leaf.  Preserve the
 	;; side classification on its new root and footer as well, so Emacs's
 	;; main window remains the source, not an unclassified footer leaf.

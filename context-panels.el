@@ -871,6 +871,10 @@ line."
     (while (< (line-number-at-pos) row)
       (insert "\n"))))
 
+;; Persist only the serializable ownership role.  Window links, buffers and
+;; control closures are rebound from retained same-session identities afterward.
+(setf (alist-get 'context-panels-protected window-persistent-parameters) 'writable)
+
 (defun context-panels-protect-window (window panel-buffer source-buffer)
   "Protect WINDOW as a context panel for PANEL-BUFFER and SOURCE-BUFFER.
 Protected context-panel windows are skipped by normal window navigation,
@@ -1633,6 +1637,20 @@ editable prompt point that reconciliation must not disturb."
       (context-panels-open-bottom-view bottom-view-id source-buffer))
     (context-panels--close-stale-panels source-buffer)))
 
+(defun context-panels--restore-window-chrome ()
+  "Rebind native-restored managed windows without claiming ordinary copies.
+Only missing volatile ownership identifies restoration; normal live windows
+retain their cached presentation and provider content is never re-rendered."
+  (dolist (window (window-list nil 'no-minibuf))
+    (when (and (window-parameter window 'context-panels-protected)
+	       (null (window-parameter window 'context-panels-panel-buffer)))
+      (with-current-buffer (window-buffer window)
+	(when (or context-panels-view-id (buffer-live-p context-panels-source-buffer))
+	  (context-panels-protect-window window (current-buffer) context-panels-source-buffer)
+	  (when context-panels-view-id
+	    (context-panels-tabs-update window)
+	    (context-panels-footer-update (current-buffer))))))))
+
 (defun context-panels-reconcile-windows ()
   "Reconcile visible context panels with the current visible source."
   (unless context-panels--reconciling
@@ -1641,6 +1659,7 @@ editable prompt point that reconciliation must not disturb."
 	  (selected (selected-window)))
       (unwind-protect
 	  (progn
+	    (context-panels--restore-window-chrome)
 	    (if-let* ((source (context-panels--visible-source-buffer)))
 		(progn
 		  (setq context-panels--last-source-buffer source)
@@ -1884,9 +1903,12 @@ When PRESERVE-DESIRE is non-nil, keep workspace desired-bottom state."
   (when (buffer-live-p panel-buffer)
     (let ((source (buffer-local-value 'context-panels-source-buffer
 				      panel-buffer)))
-      (when-let* ((window (get-buffer-window panel-buffer)))
-	(context-panels-footer-delete-view window))
-      (bury-buffer panel-buffer)
+      (dolist (window (get-buffer-window-list panel-buffer nil nil))
+	(when (window-parameter window 'context-panels-protected)
+	  (context-panels-footer-delete-view window)))
+      ;; An ordinary copy can remain selected; burying it would replace its
+      ;; buffer even though only the managed panel was explicitly closed.
+      (unless (get-buffer-window panel-buffer t) (bury-buffer panel-buffer))
       (when (buffer-live-p source)
 	(with-current-buffer source
 	  (setq context-panels-bottom-panel-buffer nil)

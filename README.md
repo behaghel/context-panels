@@ -161,6 +161,15 @@ when a view is displayed or its source provider registry changes.
 
 ## Fixed bottom-view footer
 
+Same-session native window-state restoration preserves managed panel roles,
+point, scrolling and the selected source/body/footer without re-rendering provider
+content. Footer ownership and tab/control caches are rebound to restored windows
+only for a validated owned pair; ordinary copies of a panel buffer remain ordinary.
+Window state stores a serializable role flag, not live window references or action
+closures. Closed views stay closed. This applies to surviving same-session buffers,
+not reconstruction of application state; no account, playback or capture
+initialization is performed by the chrome restoration.
+
 Every bottom view has a native footer at the bottom edge of its panel, separate
 from its scrollable content. Scrolling and sorting the content do not scroll the
 footer. The content and footer form one protected window group: switching or
