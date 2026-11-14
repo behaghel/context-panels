@@ -48,7 +48,10 @@ Additional provider keys include `:jump-side-item`, `:collect-top-markers`, `:co
 
 ### Readable side items
 
-Side panels wrap long body lines without changing their major-mode keybindings.
+Side panels wrap long body lines without changing their major-mode keybindings,
+including windows narrower than Emacs's automatic partial-width truncation
+threshold. The truncation override is buffer-local to the panel; other windows
+keep their configured behaviour.
 Headers use `context-panels-item-heading-face` in addition to any provider faces,
 so provider colours and actions are retained.
 

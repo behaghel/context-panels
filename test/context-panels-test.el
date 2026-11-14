@@ -1483,5 +1483,41 @@
 	(should (equal (get-text-property (1- (point)) 'line-prefix) "  "))
 	(should (equal (get-text-property (1- (point)) 'wrap-prefix) "    "))))))
 
+(ert-deftest context-panels-narrow-window-really-wraps-visual-lines ()
+  "A partial-width panel wraps visually without changing other windows."
+  (let ((old-width (frame-width))
+	(truncate-partial-width-windows 50)
+	source)
+    (unwind-protect
+	(save-window-excursion
+	  (set-frame-width (selected-frame) 160)
+	  (with-temp-buffer
+	    (setq source (current-buffer))
+	    (insert "Source\n")
+	    (switch-to-buffer source)
+	    (context-panels-register-provider
+	     (list :name 'wrap :icon "✣" :side-panel-width 38
+		   :collect-side-items
+		   (lambda (_) (list (list :id "wrap" :anchor-pos 1
+					   :body (make-string 100 ?x))))))
+	    (let* ((panel (context-panels-open source))
+		   (window (get-buffer-window panel)))
+	      (should (< (window-body-width window) 50))
+	      (with-selected-window window
+		(dolist (_ '(initial refreshed))
+		  (goto-char (point-min))
+		  (forward-line 1)
+		  (should (> (count-screen-lines (line-beginning-position)
+						 (line-end-position) nil window)
+			     1))
+		  (should-not (truncated-partial-width-window-p window))
+		  (context-panels-render-side-panel source)))
+	      (should (= (buffer-local-value 'truncate-partial-width-windows source) 50))
+	      (should (= (default-value 'truncate-partial-width-windows) 50))
+	      (with-current-buffer source (context-panels-close)))))
+      (when (buffer-live-p source)
+	(with-current-buffer source (context-panels-close)))
+      (set-frame-width (selected-frame) old-width))))
+
 (provide 'context-panels-test)
 ;;; context-panels-test.el ends here

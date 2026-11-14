@@ -2,7 +2,7 @@
 
 ;; Author: Hubert Behaghel
 ;; Maintainer: Hubert Behaghel
-;; Version: 0.3.0
+;; Version: 0.3.1
 ;; Package-Requires: ((emacs "29.1"))
 ;; Keywords: tools, convenience
 ;; URL: https://github.com/behaghel/context-panels
@@ -1122,6 +1122,7 @@ visible viewport rows."
       (setq context-panels--rendered-source-items
 	    (cons (buffer-chars-modified-tick) total-items)))
     (setq-local truncate-lines nil
+		truncate-partial-width-windows nil
 		word-wrap t)
     (setq-local context-panels-mode-line-counts
 		(context-panels--format-mode-line-counts
