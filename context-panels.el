@@ -2,7 +2,7 @@
 
 ;; Author: Hubert Behaghel
 ;; Maintainer: Hubert Behaghel
-;; Version: 0.1.0
+;; Version: 0.2.0
 ;; Package-Requires: ((emacs "29.1"))
 ;; Keywords: tools, convenience
 ;; URL: https://github.com/behaghel/context-panels
@@ -614,15 +614,29 @@ Return the destination position, or nil when KEY is not visible."
     (with-current-buffer source
       (context-panels-registered-provider (plist-get item :provider)))))
 
+(defun context-panels-jump-to-anchor (source-buffer item)
+  "Jump to ITEM's source anchor in SOURCE-BUFFER.
+Reject missing, inaccessible, or foreign-buffer anchors before changing context."
+  (unless (buffer-live-p source-buffer)
+    (user-error "Context panel source is no longer live"))
+  (let ((position (context-panels-item-anchor-position item)))
+    (unless (and (integer-or-marker-p position)
+		 (or (not (markerp position))
+		     (eq (marker-buffer position) source-buffer))
+		 (with-current-buffer source-buffer
+		   (<= (point-min) position (point-max))))
+      (user-error "Context panel item has no accessible source anchor"))
+    (pop-to-buffer source-buffer)
+    (goto-char position)))
+
 (defun context-panels-jump-to-item (item &optional source-buffer)
-  "Jump to context-panel ITEM using its provider.
+  "Jump to context-panel ITEM using its provider override or source anchor.
 When SOURCE-BUFFER is nil, infer it from the current context."
   (let* ((source (or source-buffer (context-panels--source-buffer)))
 	 (provider (or (context-panels-item-provider item source)
 		       (user-error "No provider for context-panel item")))
 	 (jump (or (plist-get provider :jump-side-item)
-		   (user-error "Provider %s does not support row jumps"
-			       (plist-get provider :name)))))
+		   #'context-panels-jump-to-anchor)))
     (funcall jump source item)))
 
 ;;;###autoload
@@ -694,13 +708,6 @@ When SOURCE-BUFFER is nil, infer it from the current context."
   "Jump to the previous context-panel item in the source buffer."
   (interactive)
   (context-panels--source-navigation-step -1))
-
-(defun context-panels--provider-items (provider items)
-  "Return ITEMS owned by PROVIDER."
-  (cl-remove-if-not
-   (lambda (item)
-     (eq (plist-get item :provider) (plist-get provider :name)))
-   items))
 
 (defun context-panels--provider-priority (provider)
   "Return numeric display priority for PROVIDER."
@@ -960,18 +967,82 @@ their panel buffer."
 (add-hook 'window-scroll-functions
 	  #'context-panels--schedule-viewport-refresh)
 
+(defvar context-panels-item-map
+  (let ((map (make-sparse-keymap)))
+    (define-key map (kbd "RET") #'context-panels-jump-at-point)
+    (define-key map (kbd "<return>") #'context-panels-jump-at-point)
+    map)
+  "Default row-local navigation map; provider button maps take precedence.")
+
+(defface context-panels-item-icon-face
+  '((t :inherit shadow))
+  "Face for standard side-panel row icons."
+  :group 'context-panels)
+
+(defun context-panels--annotate-side-item (start end item)
+  "Attach ITEM and default interaction properties between START and END.
+Preserve explicit provider properties, including button keymaps and help text."
+  (add-text-properties start end `(context-panels-item ,item))
+  (dolist (property `((keymap . ,context-panels-item-map)
+		      (mouse-face . highlight)
+		      (help-echo . "RET: jump to source reference")))
+    (let ((position start))
+      (while (< position end)
+	(let ((next (next-single-property-change position (car property) nil end)))
+	  (let ((existing (get-text-property position (car property))))
+	    (cond
+	     ((eq (car property) 'keymap)
+	      (unless (or (eq existing context-panels-item-map)
+			  (and (listp existing)
+			       (memq context-panels-item-map existing)))
+		(put-text-property
+		 position next 'keymap
+		 (if existing
+		     (make-composed-keymap (list existing context-panels-item-map))
+		   context-panels-item-map))))
+	     ((not existing)
+	      (put-text-property position next (car property) (cdr property)))))
+	  (setq position next)))))
+  (when (< start end)
+    (let ((nonsticky (get-text-property (1- end) 'rear-nonsticky)))
+      (unless (eq nonsticky t)
+	(put-text-property (1- end) end 'rear-nonsticky
+			   (append '(context-panels-item keymap mouse-face help-echo)
+				   nonsticky))))))
+
+(defun context-panels-render-side-item (source-buffer item &optional insert-body)
+  "Insert a standard row for ITEM from SOURCE-BUFFER.
+The header uses :icon (or the provider icon), then :label (or :id).  Insert
+:body as plain text, or pass it to INSERT-BODY when supplied.  The optional
+:icon-face overrides `context-panels-item-icon-face'."
+  (let* ((start (point))
+	 (provider (and (buffer-live-p source-buffer)
+			(context-panels-item-provider item source-buffer)))
+	 (icon (if provider
+		   (context-panels--item-icon item (list provider))
+		 (plist-get item :icon)))
+	 (body (or (plist-get item :body) "")))
+    (when icon
+      (insert (propertize icon 'face (or (plist-get item :icon-face)
+					 'context-panels-item-icon-face)) " "))
+    (insert (format "%s\n" (or (plist-get item :label) (plist-get item :id) "")))
+    (unless (string-empty-p body)
+      (funcall (or insert-body #'insert) body)
+      (unless (bolp) (insert "\n")))
+    (context-panels--annotate-side-item start (point) item)))
+
 (defun context-panels--render-composed-side-panel (source-buffer items providers)
   "Render merged provider ITEMS for SOURCE-BUFFER using PROVIDERS."
   (dolist (item (context-panels--sort-items items providers))
     (when-let* ((provider (context-panels--item-provider item providers))
-		(function (plist-get provider :render-side-item)))
+		(function (or (plist-get provider :render-side-item)
+			      #'context-panels-render-side-item)))
       (when (plist-get item :anchor-line)
 	(context-panels--pad-to-viewport-row
 	 (plist-get item :anchor-line)))
       (let ((start (point)))
 	(funcall function source-buffer item)
-	(add-text-properties start (point)
-			     `(context-panels-item ,item))))))
+	(context-panels--annotate-side-item start (point) item)))))
 
 (defun context-panels-render-side-panel (source-buffer &optional source-window)
   "Render side panel contents for SOURCE-BUFFER.
@@ -990,15 +1061,7 @@ visible viewport rows."
 			   (context-panels-collect-side-items-raw source-buffer)))
 	 (total-items (context-panels-collect-side-items-raw source-buffer))
 	 (providers (with-current-buffer source-buffer
-		      (context-panels-registered-providers)))
-	 (item-providers (cl-remove-if-not
-			  (lambda (provider)
-			    (context-panels--provider-items provider items))
-			  providers))
-	 (composable (and item-providers
-			  (cl-every (lambda (provider)
-				      (plist-get provider :render-side-item))
-				    item-providers))))
+		      (context-panels-registered-providers))))
     (with-current-buffer source-buffer
       (setq context-panels--rendered-source-items
 	    (cons (buffer-chars-modified-tick) total-items)))
@@ -1012,8 +1075,7 @@ visible viewport rows."
     (let ((inhibit-read-only t))
       (context-panels-clear-active-highlights source-buffer (current-buffer))
       (erase-buffer)
-      (when composable
-	(context-panels--render-composed-side-panel source-buffer items providers))
+      (context-panels--render-composed-side-panel source-buffer items providers)
       (goto-char (point-min))
       (when previous-key
 	(context-panels-goto-item-key previous-key))

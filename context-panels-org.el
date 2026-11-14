@@ -2,8 +2,8 @@
 
 ;; Author: Hubert Behaghel
 ;; Maintainer: Hubert Behaghel
-;; Version: 0.1.0
-;; Package-Requires: ((emacs "29.1") (org "9.6") (context-panels "0.1.0"))
+;; Version: 0.2.0
+;; Package-Requires: ((emacs "29.1") (org "9.6") (context-panels "0.2.0"))
 ;; Keywords: outlines, tools, convenience
 ;; URL: https://github.com/behaghel/context-panels
 
@@ -50,7 +50,7 @@
 	      #'context-panels-org-metadata-end-position))
 
 (cl-defun context-panels-org-make-top-marker (&rest args
-					     &key position &allow-other-keys)
+						    &key position &allow-other-keys)
   "Create an Org-aware top marker from ARGS.
 When POSITION is nil, place the marker after leading Org metadata keywords."
   (apply #'context-panels-make-top-marker
@@ -70,6 +70,31 @@ When POSITION is nil, place the marker after leading Org metadata keywords."
   "Return non-nil when point is at Org marker OVERLAY or fallback position."
   (and (derived-mode-p 'org-mode)
        (equal (point) (context-panels-org-marker-position overlay fallback-predicate))))
+
+(defun context-panels-org-insert-body (body)
+  "Insert BODY fontified as Org, with wrapped-list indentation.
+Do not change the panel's major mode or run user Org mode hooks."
+  (let ((start (point)))
+    (insert (with-temp-buffer
+	      (let ((org-inhibit-startup t))
+		(delay-mode-hooks (org-mode)))
+	      (insert body)
+	      (font-lock-ensure (point-min) (point-max))
+	      (buffer-string)))
+    (let ((end (point)))
+      (save-excursion
+	(goto-char start)
+	(while (< (point) end)
+	  (when (looking-at-p "[ \t]*\\(?:[-+*]\\|[0-9]+[.)]\\)[ \t]+")
+	    (add-text-properties (max start (line-beginning-position))
+				 (min end (line-end-position))
+				 '(wrap-prefix "  ")))
+	  (forward-line 1))))))
+
+(defun context-panels-org-render-side-item (source-buffer item)
+  "Insert standard ITEM from SOURCE-BUFFER with an Org-fontified body."
+  (context-panels-render-side-item source-buffer item
+				   #'context-panels-org-insert-body))
 
 (provide 'context-panels-org)
 ;;; context-panels-org.el ends here

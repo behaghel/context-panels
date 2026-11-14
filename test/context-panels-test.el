@@ -1343,5 +1343,99 @@
       (dolist (buffer (list buffer-a buffer-b))
 	(when (buffer-live-p buffer) (kill-buffer buffer))))))
 
+(ert-deftest context-panels-standard-rows-render-and-jump-without-callbacks ()
+  "A data-only provider displays a plain row and navigates to its anchor."
+  (save-window-excursion
+    (with-temp-buffer
+      (insert "Source target\n")
+      (let ((source (current-buffer)))
+	(context-panels-register-provider
+	 (list :name 'standard :icon "📝"
+	       :collect-side-items
+	       (lambda (_source)
+		 '((:id "note" :label "A note" :icon "✣"
+			:body "Plain *body*" :reference-pos 3)))))
+	(with-temp-buffer
+	  (setq-local context-panels-source-buffer source)
+	  (context-panels-render-side-panel source)
+	  (should (equal (buffer-string) "✣ A note\nPlain *body*\n"))
+	  (goto-char (point-min))
+	  (search-forward "body")
+	  (should (eq (plist-get (context-panels-item-at-point) :provider)
+		      'standard))
+	  (dolist (key '("RET" "<return>"))
+	    (should (eq (key-binding (kbd key))
+			#'context-panels-jump-at-point)))
+	  (context-panels-jump-at-point)
+	  (should (eq (current-buffer) source))
+	  (should (= (point) 3)))))))
+
+(ert-deftest context-panels-standard-rows-preserve-custom-renderers-and-actions ()
+  "Mixed rows preserve custom text, button maps, and provider jump callbacks."
+  (with-temp-buffer
+    (insert "Source\n")
+    (let ((source (current-buffer))
+	  (button-map (make-sparse-keymap))
+	  called)
+      (define-key button-map (kbd "RET") #'ignore)
+      (context-panels-register-provider
+       (list :name 'standard :icon "📝" :priority 10
+	     :collect-side-items (lambda (_) '((:id "plain" :body "Plain")))))
+      (context-panels-register-provider
+       (list :name 'custom :icon "💬" :priority 20
+	     :collect-side-items
+	     (lambda (_) '((:id "custom" :anchor-pos 9999)))
+	     :render-side-item
+	     (lambda (_source _item)
+	       (insert "Custom " (propertize "button" 'keymap button-map
+					     'help-echo "Custom help") "\n"))
+	     :jump-side-item (lambda (buffer item)
+			       (setq called (list buffer (plist-get item :id))))))
+      (with-temp-buffer
+	(special-mode)
+	(let ((map (make-sparse-keymap)))
+	  (define-key map (kbd "RET") #'forward-char)
+	  (use-local-map map)
+	  (setq-local context-panels-source-buffer source)
+	  (context-panels-render-side-panel source)
+	  (should (search-forward "Plain" nil t))
+	  (goto-char (point-min))
+	  (search-forward "Custom")
+	  (should (eq (key-binding (kbd "RET")) #'context-panels-jump-at-point))
+	  (context-panels-jump-at-point)
+	  (should (equal called (list source "custom")))
+	  (search-forward "butt")
+	  (should (eq (key-binding (kbd "RET")) #'ignore))
+	  (should (equal (get-text-property (point) 'help-echo) "Custom help"))
+	  (goto-char (point-max))
+	  (should (eq (key-binding (kbd "RET")) #'forward-char)))))))
+
+(ert-deftest context-panels-default-jump-rejects-unusable-anchors-before-switching ()
+  "Missing, out-of-range, or foreign anchors leave the panel context intact."
+  (with-temp-buffer
+    (insert "Source\n")
+    (let ((source (current-buffer)))
+      (context-panels-register-provider (list :name 'standard :icon "📝"))
+      (with-temp-buffer
+	(let ((panel (current-buffer)))
+	  (dolist (anchor (list nil 0 9999 (point-marker)))
+	    (should-error
+	     (context-panels-jump-to-item
+	      (list :provider 'standard :anchor-pos anchor) source)
+	     :type 'user-error)
+	    (should (eq (current-buffer) panel))))))))
+
+(ert-deftest context-panels-standard-row-icon-matches-counting-fallback ()
+  "Absent or empty item icons use the same provider icon as the counters."
+  (with-temp-buffer
+    (let ((source (current-buffer)))
+      (context-panels-register-provider (list :name 'standard :icon "📝"))
+      (dolist (icon '(nil "" "✣"))
+	(with-temp-buffer
+	  (context-panels-render-side-item
+	   source (list :provider 'standard :id "note" :icon icon))
+	  (should (equal (buffer-string)
+			 (concat (if (equal icon "✣") "✣" "📝") " note\n"))))))))
+
 (provide 'context-panels-test)
 ;;; context-panels-test.el ends here
