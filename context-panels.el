@@ -2,7 +2,7 @@
 
 ;; Author: Hubert Behaghel
 ;; Maintainer: Hubert Behaghel
-;; Version: 0.5.1
+;; Version: 0.5.2
 ;; Package-Requires: ((emacs "29.1"))
 ;; Keywords: tools, convenience
 ;; URL: https://github.com/behaghel/context-panels
@@ -1551,10 +1551,10 @@ When PRESERVE-DESIRE is non-nil, keep workspace desired-panel state."
   "Close the generic side context panel for the current source."
   (interactive)
   (let* ((source (context-panels--source-buffer))
-	 (buffer-name (context-panels--side-panel-buffer-name source))
-	 (panel-buffer (or (and (buffer-live-p context-panels-side-panel-buffer)
-				context-panels-side-panel-buffer)
-			   (get-buffer buffer-name))))
+	 (associated (buffer-local-value 'context-panels-side-panel-buffer source))
+	 (panel-buffer (if (buffer-live-p associated)
+			   associated
+			 (get-buffer (context-panels--side-panel-buffer-name source)))))
     (context-panels--close-side-panel-buffer panel-buffer)))
 
 (defun context-panels--bottom-view-descriptors (source-buffer)
