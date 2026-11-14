@@ -62,11 +62,33 @@ retains precedence and bypasses this optional presentation callback.
   the default inserts `:body` as plain text. Nested row identities are preserved.
 - `:properties` supplies additional native row text properties without replacing
   properties already supplied by nested body content.
-- `:help` supplies contextual help text without executing an action.
+- `:help` supplies contextual help text or a `(SOURCE ITEM)` help function.
+  Functions run only on explicit help requests, never as native hover callbacks.
 
 The optional Org library provides `context-panels-org-render-item-body` for the
 body callback. Providers retain semantic labels, statuses, authors and actions;
 the framework does not define a taxonomy or infer comment workflows from notes.
+
+### Rendered-row navigation and item help
+
+`context-panels-next-row` and `context-panels-previous-row` traverse the retained
+rendered rows across providers and wrap at the ends. They keep panel focus and do
+not move source point, scroll the source or recollect providers. Existing
+`context-panels-next-item` / `context-panels-previous-item` retain their distinct
+source-navigation behavior.
+
+Native row-local defaults bind `]c`, `[c` and `?` to row movement and
+`context-panels-describe-item`; explicit provider/button maps retain precedence.
+The help command uses a native help buffer and computes text in the originating
+panel context. A provider may declare `:item-help (SOURCE ITEM)` for roots and
+nested rows; an item-specific `:help` overrides it. Without a declaration, help
+shows the item and primary-reference jump, not another provider's actions.
+
+`context-panels-command-description` describes a command using a verified
+currently effective binding, falling back to its public `M-x` name when no
+binding applies. Help reads the retained item; it does not select a backend,
+collect providers, execute an action or request authorization. Personal modal
+bindings remain consumer-owned.
 
 ### Readable side items
 
