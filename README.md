@@ -46,6 +46,28 @@ An Org provider can require `context-panels-org` and set `:render-side-item` to 
 
 Additional provider keys include `:jump-side-item`, `:collect-top-markers`, `:collect-bottom-views`, `:refresh-source-overlays`, `:cleanup-source-overlays`, `:follow-source-p`, `:side-panel-mode`, `:side-panel-buffer-name`, and `:side-panel-width`.
 
+### Declarative side-item presentation
+
+An optional `:present-side-item` callback receives `(SOURCE ITEM)` and returns
+presentation-only fields. Context Panels applies them to a copy of each collected
+item and shares that snapshot between rows and counters. Original records and
+semantic identity/anchor fields remain unchanged. A custom `:render-side-item`
+retains precedence and bypasses this optional presentation callback.
+
+- `:icon` and `:icon-face` supply the row/count icon while preserving native text properties.
+- `:label` supplies header text. Explicit nil puts the body immediately after the
+  icon, without a header or an internal-ID fallback. Wrapped lines align with the body.
+- `:details` supplies optional ordered metadata lines, preserving provider faces.
+- `:render-body` receives `(SOURCE ITEM)` and inserts domain-specific body content;
+  the default inserts `:body` as plain text. Nested row identities are preserved.
+- `:properties` supplies additional native row text properties without replacing
+  properties already supplied by nested body content.
+- `:help` supplies contextual help text without executing an action.
+
+The optional Org library provides `context-panels-org-render-item-body` for the
+body callback. Providers retain semantic labels, statuses, authors and actions;
+the framework does not define a taxonomy or infer comment workflows from notes.
+
 ### Readable side items
 
 Side panels wrap long body lines without changing their major-mode keybindings,
