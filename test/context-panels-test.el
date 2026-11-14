@@ -1519,5 +1519,86 @@
 	(with-current-buffer source (context-panels-close)))
       (set-frame-width (selected-frame) old-width))))
 
+(ert-deftest context-panels-declarative-inline-body-keeps-record-and-counter-icon ()
+  "Presentation supplies inline body and count icon without rewriting records."
+  (with-temp-buffer
+    (insert "Source\n")
+    (let* ((source (current-buffer))
+	   (record '(:id "private-id" :body "A plain note.\nSecond line." :anchor-pos 1))
+	   (before (copy-tree record))
+	   (calls 0))
+      (setq-local context-panels-side-item-body-indent 0)
+      (context-panels-register-provider
+       (list :name 'notes :icon "N"
+	     :collect-side-items (lambda (_) (list record))
+	     :present-side-item
+	     (lambda (buffer item)
+	       (should (eq buffer source))
+	       (should (equal (plist-get item :id) "private-id"))
+	       (cl-incf calls)
+	       (list :icon "†" :label nil))))
+      (with-temp-buffer
+	(context-panels-render-side-panel source)
+	(should (string-prefix-p "† A plain note.\nSecond line.\n" (buffer-string)))
+	(should-not (string-match-p "private-id" (buffer-string)))
+	(should (= calls 1))
+	(should (string-match-p "†" context-panels-mode-line-counts))
+	(goto-char (point-min))
+	(should (equal (get-text-property (point) 'wrap-prefix) "  "))
+	(should-not (memq 'context-panels-item-heading-face
+			  (ensure-list (get-text-property (point) 'face))))
+	(should (eq (key-binding (kbd "RET")) #'context-panels-jump-at-point)))
+      (should (equal record before)))))
+
+(ert-deftest context-panels-declarative-details-preserve-nested-body-identity ()
+  "Shared row composition preserves detail faces and nested body identities."
+  (with-temp-buffer
+    (insert "Source\n")
+    (let ((source (current-buffer))
+	  (child '(:provider notes :id "child" :anchor-pos 1)))
+      (context-panels-register-provider
+       (list :name 'notes :icon "N"
+	     :collect-side-items (lambda (_) (list '(:id "root" :anchor-pos 1)))
+	     :present-side-item
+	     (lambda (_source item)
+	       (list :label "Quoted target"
+		     :properties (list 'fixture-record item)
+		     :details (list (propertize "Alice" 'face 'font-lock-string-face))
+		     :render-body
+		     (lambda (_source _item)
+		       (insert (propertize "Reply body\n" 'context-panels-item child)))))))
+      (with-temp-buffer
+	(context-panels-render-side-panel source)
+	(should (string-match-p "N Quoted target\nAlice\nReply body\n" (buffer-string)))
+	(goto-char (point-min))
+	(should-not (plist-member (get-text-property (point) 'fixture-record) :properties))
+	(search-forward "Alice")
+	(should (memq 'font-lock-string-face
+		      (ensure-list (get-text-property (1- (point)) 'face))))
+	(search-forward "Reply body")
+	(should (equal (plist-get (context-panels-item-at-point) :id) "child"))))))
+
+(ert-deftest context-panels-presentation-retains-legacy-header-and-custom-override ()
+  "Absent presentation labels retain IDs; custom renderers bypass projection."
+  (with-temp-buffer
+    (insert "Source\n")
+    (let ((source (current-buffer)) (calls 0))
+      (context-panels-register-provider
+       (list :name 'notes :icon "N"
+	     :collect-side-items (lambda (_) (list '(:id "identity" :label nil :body "Body")))
+	     :present-side-item (lambda (_source _item) (cl-incf calls) '(:details ("Metadata")))))
+      (with-temp-buffer
+	(context-panels-render-side-panel source)
+	(should (string-prefix-p "N identity\nMetadata\nBody\n" (buffer-string))))
+      (should (= calls 1))
+      (context-panels-register-provider
+       (list :name 'notes :icon "N"
+	     :collect-side-items (lambda (_) (list '(:id "identity")))
+	     :present-side-item (lambda (&rest _) (ert-fail "Custom renderer must win"))
+	     :render-side-item (lambda (_source _item) (insert "Custom\n"))))
+      (with-temp-buffer
+	(context-panels-render-side-panel source)
+	(should (equal (buffer-string) "Custom\n"))))))
+
 (provide 'context-panels-test)
 ;;; context-panels-test.el ends here

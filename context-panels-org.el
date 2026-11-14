@@ -2,8 +2,8 @@
 
 ;; Author: Hubert Behaghel
 ;; Maintainer: Hubert Behaghel
-;; Version: 0.3.1
-;; Package-Requires: ((emacs "29.1") (org "9.6") (context-panels "0.3.1"))
+;; Version: 0.4.0
+;; Package-Requires: ((emacs "29.1") (org "9.6") (context-panels "0.4.0"))
 ;; Keywords: outlines, tools, convenience
 ;; URL: https://github.com/behaghel/context-panels
 
@@ -90,6 +90,10 @@ Do not change the panel's major mode or run user Org mode hooks."
 				 (min end (line-end-position))
 				 '(wrap-prefix "  ")))
 	  (forward-line 1))))))
+
+(defun context-panels-org-render-item-body (_source-buffer item)
+  "Insert the Org body of ITEM without adding a header or changing major mode."
+  (context-panels-org-insert-body (or (plist-get item :body) "")))
 
 (defun context-panels-org-render-side-item (source-buffer item)
   "Insert standard ITEM from SOURCE-BUFFER with an Org-fontified body."

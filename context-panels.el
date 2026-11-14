@@ -2,7 +2,7 @@
 
 ;; Author: Hubert Behaghel
 ;; Maintainer: Hubert Behaghel
-;; Version: 0.3.1
+;; Version: 0.4.0
 ;; Package-Requires: ((emacs "29.1"))
 ;; Keywords: tools, convenience
 ;; URL: https://github.com/behaghel/context-panels
@@ -323,7 +323,18 @@ PROVIDER is a plist descriptor.  Registering another provider with the same
 (defun context-panels--item-with-provider (item provider)
   "Return ITEM copied with PROVIDER ownership metadata."
   (let ((copy (copy-sequence item)))
-    (plist-put copy :provider (plist-get provider :name))))
+    (setq copy (plist-put copy :provider (plist-get provider :name)))
+    (when (and (not (plist-get provider :render-side-item))
+	       (plist-get provider :present-side-item))
+      (let ((view (funcall (plist-get provider :present-side-item)
+			   (current-buffer) (copy-sequence copy))))
+	(setq copy (plist-put copy :context-panels-inline-body
+			      (and (plist-member view :label)
+				   (null (plist-get view :label)))))
+	(dolist (key '(:icon :icon-face :label :details :render-body :properties :help))
+	  (when (plist-member view key)
+	    (setq copy (plist-put copy key (plist-get view key)))))))
+    copy))
 
 (defun context-panels-collect-side-items-raw (&optional source-buffer)
   "Collect raw side item descriptors for SOURCE-BUFFER.
@@ -996,10 +1007,18 @@ Set buffer-locally in a source buffer.  Existing continuation prefixes are kept.
   "Face for standard side-panel row icons."
   :group 'context-panels)
 
+(defun context-panels--fill-row-property (start end property value)
+  "Fill missing PROPERTY with VALUE between START and END, preserving children."
+  (while (< start end)
+    (let ((next (next-single-property-change start property nil end)))
+      (unless (get-text-property start property)
+	(put-text-property start next property value))
+      (setq start next))))
+
 (defun context-panels--annotate-side-item (start end item)
   "Attach ITEM and default interaction properties between START and END.
 Preserve explicit provider properties, including button keymaps and help text."
-  (add-text-properties start end `(context-panels-item ,item))
+  (context-panels--fill-row-property start end 'context-panels-item item)
   (dolist (property `((keymap . ,context-panels-item-map)
 		      (mouse-face . highlight)
 		      (help-echo . "RET: jump to source reference")))
@@ -1028,25 +1047,51 @@ Preserve explicit provider properties, including button keymaps and help text."
 							 line-prefix wrap-prefix face)
 				   nonsticky))))))
 
+(defun context-panels--inline-body-p (item)
+  "Return non-nil when ITEM explicitly presents its body beside the icon."
+  (plist-get item :context-panels-inline-body))
+
+(defface context-panels-item-details-face
+  '((t :inherit shadow :height 0.9))
+  "Face for declarative row details, beneath provider-specific faces."
+  :group 'context-panels)
+
 (defun context-panels-render-side-item (source-buffer item &optional insert-body)
-  "Insert a standard row for ITEM from SOURCE-BUFFER.
-The header uses :icon (or the provider icon), then :label (or :id).  Insert
-:body as plain text, or pass it to INSERT-BODY when supplied.  The optional
-:icon-face overrides `context-panels-item-icon-face'."
+  "Insert ITEM from SOURCE-BUFFER using its optional presentation fields.
+Legacy rows use :label or :id as their header.  Declarative rows with explicit
+nil :label begin their body beside the icon.  INSERT-BODY formats plain bodies."
   (let* ((start (point))
 	 (provider (and (buffer-live-p source-buffer)
 			(context-panels-item-provider item source-buffer)))
-	 (icon (if provider
-		   (context-panels--item-icon item (list provider))
+	 (icon (if provider (context-panels--item-icon item (list provider))
 		 (plist-get item :icon)))
 	 (body (or (plist-get item :body) "")))
     (when icon
-      (insert (propertize icon 'face (or (plist-get item :icon-face)
-					 'context-panels-item-icon-face)) " "))
-    (insert (format "%s\n" (or (plist-get item :label) (plist-get item :id) "")))
-    (unless (string-empty-p body)
-      (funcall (or insert-body #'insert) body)
-      (unless (bolp) (insert "\n")))
+      (let ((icon-start (point)))
+	(insert icon)
+	(add-face-text-property icon-start (point)
+				(or (plist-get item :icon-face)
+				    'context-panels-item-icon-face) t)
+	(insert " ")))
+    (unless (context-panels--inline-body-p item)
+      (insert (format "%s\n" (or (plist-get item :label) (plist-get item :id) ""))))
+    (dolist (detail (plist-get item :details))
+      (unless (string-empty-p detail)
+	(let ((detail-start (point)))
+	  (insert detail "\n")
+	  (add-face-text-property detail-start (point)
+				  'context-panels-item-details-face t))))
+    (if-let* ((render (plist-get item :render-body)))
+	(funcall render source-buffer item)
+      (unless (string-empty-p body)
+	(funcall (or insert-body #'insert) body)))
+    (unless (bolp) (insert "\n"))
+    (let ((properties (plist-get item :properties)))
+      (while properties
+	(let ((property (pop properties)) (value (pop properties)))
+	  (context-panels--fill-row-property start (point) property value))))
+    (when (plist-get item :help)
+      (context-panels--fill-row-property start (point) 'help-echo (plist-get item :help)))
     (context-panels--annotate-side-item start (point) item)))
 
 (defun context-panels--prefix-with-indent (prefix indent)
@@ -1055,31 +1100,37 @@ The header uses :icon (or the provider icon), then :label (or :id).  Insert
 		       (prefix (propertize " " 'display prefix))
 		       (t ""))))
 
-(defun context-panels--style-side-item (start end source-buffer)
+(defun context-panels--indent-region (start end indent properties)
+  "Compose INDENT with display PROPERTIES between START and END."
+  (dolist (property properties)
+    (let ((position start))
+      (while (< position end)
+	(let ((next (next-single-property-change position property nil end)))
+	  (put-text-property position next property
+			     (context-panels--prefix-with-indent
+			      (get-text-property position property) indent))
+	  (setq position next))))))
+
+(defun context-panels--style-side-item (start end source-buffer &optional item)
   "Style the item between START and END using SOURCE-BUFFER preferences."
   (when (< start end)
     (save-excursion
       (goto-char start)
-      (add-face-text-property start (min end (line-end-position))
-			      'context-panels-item-heading-face t)
-      (let ((columns (buffer-local-value 'context-panels-side-item-body-indent
-					 source-buffer)))
+      (let* ((inline (context-panels--inline-body-p item))
+	     (icon (and inline
+			(context-panels--item-icon
+			 item (buffer-local-value 'context-panels-providers source-buffer))))
+	     (columns (if inline (if icon (1+ (string-width icon)) 0)
+			(buffer-local-value 'context-panels-side-item-body-indent source-buffer)))
+	     (first-end (min end (line-beginning-position 2)))
+	     (indent (make-string columns ?\s)))
+	(unless inline
+	  (add-face-text-property start (min end (line-end-position))
+				  'context-panels-item-heading-face t))
 	(when (> columns 0)
-	  (let ((indent (make-string columns ?\s)))
-	    (forward-line 1)
-	    (while (< (point) end)
-	      (let ((line-end (min end (line-beginning-position 2))))
-		(dolist (property '(line-prefix wrap-prefix))
-		  (let ((position (point)))
-		    (while (< position line-end)
-		      (let* ((next (next-single-property-change
-				    position property nil line-end))
-			     (existing (get-text-property position property)))
-			(put-text-property position next property
-					   (context-panels--prefix-with-indent
-					    existing indent))
-			(setq position next))))))
-	      (forward-line 1))))))))
+	  (when inline
+	    (context-panels--indent-region start first-end indent '(wrap-prefix)))
+	  (context-panels--indent-region first-end end indent '(line-prefix wrap-prefix)))))))
 
 (defun context-panels--render-composed-side-panel (source-buffer items providers)
   "Render merged provider ITEMS for SOURCE-BUFFER using PROVIDERS."
@@ -1096,7 +1147,7 @@ The header uses :icon (or the provider icon), then :label (or :id).  Insert
 	  (context-panels--pad-to-viewport-row (plist-get item :anchor-line)))
 	(let ((start (point)))
 	  (funcall function source-buffer item)
-	  (context-panels--style-side-item start (point) source-buffer)
+	  (context-panels--style-side-item start (point) source-buffer item)
 	  (context-panels--annotate-side-item start (point) item)
 	  (setq rendered t))))))
 
