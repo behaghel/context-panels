@@ -2,7 +2,7 @@
 
 ;; Author: Hubert Behaghel
 ;; Maintainer: Hubert Behaghel
-;; Version: 0.4.0
+;; Version: 0.5.0
 ;; Package-Requires: ((emacs "29.1"))
 ;; Keywords: tools, convenience
 ;; URL: https://github.com/behaghel/context-panels
@@ -604,6 +604,60 @@ SOURCE-BUFFER is the provider's source.  Closed side panels remain closed."
 	  (goto-char (if (and next (> next (point))) next (1+ (point)))))))
     (nreverse positions)))
 
+(defun context-panels--step-row (step)
+  "Move through rendered rows by STEP without navigating the source."
+  (let* ((starts (context-panels-item-starts))
+	 (current (car (last (cl-remove-if (lambda (start) (> start (point))) starts))))
+	 (index (and current (cl-position current starts))))
+    (unless starts (user-error "No context-panel rows"))
+    (goto-char (nth (mod (+ (or index (if (> step 0) -1 0)) step)
+			 (length starts)) starts))))
+
+;;;###autoload
+(defun context-panels-next-row ()
+  "Move to the next rendered panel row, wrapping without moving source point."
+  (interactive)
+  (context-panels--step-row 1))
+
+;;;###autoload
+(defun context-panels-previous-row ()
+  "Move to the previous rendered panel row without navigating the source."
+  (interactive)
+  (context-panels--step-row -1))
+
+(defun context-panels-command-description (command label)
+  "Describe COMMAND as LABEL using an effective binding or its command name."
+  (let ((key (where-is-internal command nil t)))
+    (format "%s  %s"
+	    (if (and key (eq (key-binding key) command))
+		(key-description key)
+	      (format "M-x %s" command))
+	    label)))
+
+(defun context-panels-item-help-text ()
+  "Return help for the current retained item without collecting providers.
+A provider may supply :help text or a function taking SOURCE and ITEM."
+  (let* ((item (or (context-panels-item-at-point)
+		   (user-error "No context-panel item at point")))
+	 (source (context-panels--source-buffer))
+	 (provider (context-panels-item-provider item source))
+	 (icon (or (plist-get item :icon) (plist-get provider :icon) ""))
+	 (label (or (plist-get item :label)
+		    (car (split-string (or (plist-get item :body) "") "\n")) ""))
+	 (help (or (plist-get item :help) (plist-get provider :item-help))))
+    (concat icon " " label "\n\n"
+	    (cond ((functionp help) (funcall help source item))
+		  ((stringp help) help)
+		  (t (context-panels-command-description
+		      #'context-panels-jump-at-point "Jump to source reference"))))))
+
+;;;###autoload
+(defun context-panels-describe-item ()
+  "Show native help for the current row without executing an item action."
+  (interactive)
+  (let ((text (context-panels-item-help-text)))
+    (with-help-window "*Context Item Help*" (princ text))))
+
 (defun context-panels-goto-item-key (key)
   "Move point to the context-panel item identified by KEY.
 Return the destination position, or nil when KEY is not visible."
@@ -999,8 +1053,11 @@ Set buffer-locally in a source buffer.  Existing continuation prefixes are kept.
   (let ((map (make-sparse-keymap)))
     (define-key map (kbd "RET") #'context-panels-jump-at-point)
     (define-key map (kbd "<return>") #'context-panels-jump-at-point)
+    (define-key map (kbd "]c") #'context-panels-next-row)
+    (define-key map (kbd "[c") #'context-panels-previous-row)
+    (define-key map (kbd "?") #'context-panels-describe-item)
     map)
-  "Default row-local navigation map; provider button maps take precedence.")
+  "Default row-local navigation/help map; provider button maps take precedence.")
 
 (defface context-panels-item-icon-face
   '((t :inherit shadow))
@@ -1090,7 +1147,7 @@ nil :label begin their body beside the icon.  INSERT-BODY formats plain bodies."
       (while properties
 	(let ((property (pop properties)) (value (pop properties)))
 	  (context-panels--fill-row-property start (point) property value))))
-    (when (plist-get item :help)
+    (when (stringp (plist-get item :help))
       (context-panels--fill-row-property start (point) 'help-echo (plist-get item :help)))
     (context-panels--annotate-side-item start (point) item)))
 

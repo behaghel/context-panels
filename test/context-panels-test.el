@@ -1547,7 +1547,9 @@
 	(should (equal (get-text-property (point) 'wrap-prefix) "  "))
 	(should-not (memq 'context-panels-item-heading-face
 			  (ensure-list (get-text-property (point) 'face))))
-	(should (eq (key-binding (kbd "RET")) #'context-panels-jump-at-point)))
+	(should (eq (key-binding (kbd "RET")) #'context-panels-jump-at-point))
+	(should (eq (key-binding (kbd "?")) #'context-panels-describe-item))
+	(should (eq (key-binding (kbd "]c")) #'context-panels-next-row)))
       (should (equal record before)))))
 
 (ert-deftest context-panels-declarative-details-preserve-nested-body-identity ()
@@ -1599,6 +1601,113 @@
       (with-temp-buffer
 	(context-panels-render-side-panel source)
 	(should (equal (buffer-string) "Custom\n"))))))
+
+(ert-deftest context-panels-panel-row-motion-does-not-navigate-the-source ()
+  "Rendered row movement wraps across providers without moving the source."
+  (save-window-excursion
+    (with-temp-buffer
+      (insert "Source one\nSource two\n")
+      (goto-char 6)
+      (let ((source (current-buffer)) (source-point (point)))
+	(switch-to-buffer source)
+	(let ((source-window (selected-window))
+	      (panel-window (split-window-right)))
+	  (with-temp-buffer
+	    (setq-local context-panels-source-buffer source)
+	    (insert (propertize "First row\n" 'context-panels-item '(:provider comments :id "first")))
+	    (insert (propertize "Second row\n" 'context-panels-item '(:provider notes :id "second")))
+	    (insert (propertize "Third row\n" 'context-panels-item '(:provider notes :id "third")))
+	    (set-window-buffer panel-window (current-buffer))
+	    (select-window panel-window)
+	    (goto-char (+ (point-min) 3))
+	    (let ((source-start (window-start source-window)))
+	      (context-panels-previous-row)
+	      (should (equal (plist-get (context-panels-item-at-point) :id) "third"))
+	      (context-panels-next-row)
+	      (should (equal (plist-get (context-panels-item-at-point) :id) "first"))
+	      (context-panels-next-row)
+	      (should (equal (plist-get (context-panels-item-at-point) :id) "second"))
+	      (context-panels-previous-row)
+	      (should (equal (plist-get (context-panels-item-at-point) :id) "first"))
+	      (should (eq (selected-window) panel-window))
+	      (should (= (with-current-buffer source (point)) source-point))
+	      (should (= (window-start source-window) source-start)))))))))
+
+(ert-deftest context-panels-item-help-uses-current-note-without-comment-actions ()
+  "Default item help describes the note without leaking internal IDs or actions."
+  (with-temp-buffer
+    (let ((source (current-buffer)))
+      (context-panels-register-provider (list :name 'notes :icon "✣"))
+      (with-temp-buffer
+	(setq-local context-panels-source-buffer source)
+	(insert (propertize "A useful note.\n" 'context-panels-item
+			    '(:provider notes :id "private-id" :label nil
+					:body "A useful note." :context-panels-inline-body t)))
+	(goto-char (point-min))
+	(let ((help (context-panels-item-help-text)))
+	  (should (string-match-p "A useful note" help))
+	  (should (string-match-p "[Jj]ump" help))
+	  (should-not (string-match-p "private-id\\|[Rr]eply\\|[Dd]elete\\|[Pp]ush" help)))))))
+
+(ert-deftest context-panels-item-help-callback-uses-retained-child-without-collection ()
+  "Explicit help uses the retained child, never collectors or hover callbacks."
+  (with-temp-buffer
+    (let ((source (current-buffer)) (help-calls 0))
+      (context-panels-register-provider
+       (list :name 'notes :icon "N"
+	     :collect-side-items (lambda (_) (ert-fail "Help must not collect"))
+	     :item-help (lambda (buffer item)
+			  (should (eq buffer source))
+			  (cl-incf help-calls)
+			  (format "Actions for %s" (plist-get item :id)))))
+      (with-temp-buffer
+	(setq-local context-panels-source-buffer source)
+	(insert (propertize "Reply\n" 'context-panels-item
+			    '(:provider notes :id "child" :body "Reply")))
+	(goto-char (point-min))
+	(should (= help-calls 0))
+	(should (string-match-p "Actions for child" (context-panels-item-help-text)))
+	(should (= help-calls 1))))))
+
+(ert-deftest context-panels-command-hints-check-effective-bindings ()
+  "Key hints report real bindings and reject stale or shadowed candidates."
+  (with-temp-buffer
+    (let ((map (make-sparse-keymap)))
+      (define-key map (kbd "K") #'context-panels-describe-item)
+      (use-local-map map)
+      (should (string-prefix-p "K  " (context-panels-command-description
+				      #'context-panels-describe-item "Help")))
+      (define-key map (kbd "K") #'ignore)
+      (cl-letf (((symbol-function 'where-is-internal) (lambda (&rest _) (kbd "K"))))
+	(should (string-prefix-p "M-x context-panels-describe-item  "
+				 (context-panels-command-description
+				  #'context-panels-describe-item "Help")))))))
+
+(ert-deftest context-panels-item-help-displays-without-editing-origin ()
+  "Native help shows the retained item and preserves origin text and point."
+  (save-window-excursion
+    (with-temp-buffer
+      (insert "Original source")
+      (goto-char 4)
+      (let ((source (current-buffer)) (source-point (point)))
+	(context-panels-register-provider (list :name 'notes :icon "✣"))
+	(with-temp-buffer
+	  (setq-local context-panels-source-buffer source)
+	  (insert (propertize "A useful note.\n" 'context-panels-item
+			      '(:provider notes :body "A useful note.")))
+	  (switch-to-buffer (current-buffer))
+	  (goto-char 3)
+	  (let ((origin (current-buffer)) (position (point)) (tick (buffer-chars-modified-tick)))
+	    (unwind-protect
+		(progn
+		  (context-panels-describe-item)
+		  (with-current-buffer "*Context Item Help*"
+		    (should (string-match-p "A useful note" (buffer-string))))
+		  (should (= position (with-current-buffer origin (point))))
+		  (should (= tick (buffer-chars-modified-tick origin)))
+		  (should (= source-point (with-current-buffer source (point)))))
+	      (when (get-buffer "*Context Item Help*")
+		(kill-buffer "*Context Item Help*")))))))))
 
 (provide 'context-panels-test)
 ;;; context-panels-test.el ends here
