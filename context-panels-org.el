@@ -2,8 +2,8 @@
 
 ;; Author: Hubert Behaghel
 ;; Maintainer: Hubert Behaghel
-;; Version: 0.3.0
-;; Package-Requires: ((emacs "29.1") (org "9.6") (context-panels "0.3.0"))
+;; Version: 0.3.1
+;; Package-Requires: ((emacs "29.1") (org "9.6") (context-panels "0.3.1"))
 ;; Keywords: outlines, tools, convenience
 ;; URL: https://github.com/behaghel/context-panels
 
