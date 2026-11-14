@@ -2,7 +2,7 @@
 
 ;; Author: Hubert Behaghel
 ;; Maintainer: Hubert Behaghel
-;; Version: 0.2.0
+;; Version: 0.3.0
 ;; Package-Requires: ((emacs "29.1"))
 ;; Keywords: tools, convenience
 ;; URL: https://github.com/behaghel/context-panels
@@ -967,6 +967,23 @@ their panel buffer."
 (add-hook 'window-scroll-functions
 	  #'context-panels--schedule-viewport-refresh)
 
+(defcustom context-panels-side-item-spacing 0
+  "Minimum blank lines between rendered side items.
+Set buffer-locally in a source buffer to customize its panel."
+  :type 'natnum
+  :group 'context-panels)
+
+(defcustom context-panels-side-item-body-indent 0
+  "Display indentation in character columns below each side-item header.
+Set buffer-locally in a source buffer.  Existing continuation prefixes are kept."
+  :type 'natnum
+  :group 'context-panels)
+
+(defface context-panels-item-heading-face
+  '((t :inherit bold))
+  "Face added to side-item headers without replacing provider colours."
+  :group 'context-panels)
+
 (defvar context-panels-item-map
   (let ((map (make-sparse-keymap)))
     (define-key map (kbd "RET") #'context-panels-jump-at-point)
@@ -1007,7 +1024,8 @@ Preserve explicit provider properties, including button keymaps and help text."
     (let ((nonsticky (get-text-property (1- end) 'rear-nonsticky)))
       (unless (eq nonsticky t)
 	(put-text-property (1- end) end 'rear-nonsticky
-			   (append '(context-panels-item keymap mouse-face help-echo)
+			   (append '(context-panels-item keymap mouse-face help-echo
+							 line-prefix wrap-prefix face)
 				   nonsticky))))))
 
 (defun context-panels-render-side-item (source-buffer item &optional insert-body)
@@ -1031,18 +1049,56 @@ The header uses :icon (or the provider icon), then :label (or :id).  Insert
       (unless (bolp) (insert "\n")))
     (context-panels--annotate-side-item start (point) item)))
 
+(defun context-panels--prefix-with-indent (prefix indent)
+  "Return display PREFIX preceded by INDENT without losing display objects."
+  (concat indent (cond ((stringp prefix) prefix)
+		       (prefix (propertize " " 'display prefix))
+		       (t ""))))
+
+(defun context-panels--style-side-item (start end source-buffer)
+  "Style the item between START and END using SOURCE-BUFFER preferences."
+  (when (< start end)
+    (save-excursion
+      (goto-char start)
+      (add-face-text-property start (min end (line-end-position))
+			      'context-panels-item-heading-face t)
+      (let ((columns (buffer-local-value 'context-panels-side-item-body-indent
+					 source-buffer)))
+	(when (> columns 0)
+	  (let ((indent (make-string columns ?\s)))
+	    (forward-line 1)
+	    (while (< (point) end)
+	      (let ((line-end (min end (line-beginning-position 2))))
+		(dolist (property '(line-prefix wrap-prefix))
+		  (let ((position (point)))
+		    (while (< position line-end)
+		      (let* ((next (next-single-property-change
+				    position property nil line-end))
+			     (existing (get-text-property position property)))
+			(put-text-property position next property
+					   (context-panels--prefix-with-indent
+					    existing indent))
+			(setq position next))))))
+	      (forward-line 1))))))))
+
 (defun context-panels--render-composed-side-panel (source-buffer items providers)
   "Render merged provider ITEMS for SOURCE-BUFFER using PROVIDERS."
-  (dolist (item (context-panels--sort-items items providers))
-    (when-let* ((provider (context-panels--item-provider item providers))
-		(function (or (plist-get provider :render-side-item)
-			      #'context-panels-render-side-item)))
-      (when (plist-get item :anchor-line)
-	(context-panels--pad-to-viewport-row
-	 (plist-get item :anchor-line)))
-      (let ((start (point)))
-	(funcall function source-buffer item)
-	(context-panels--annotate-side-item start (point) item)))))
+  (let ((spacing (buffer-local-value 'context-panels-side-item-spacing source-buffer))
+	rendered)
+    (dolist (item (context-panels--sort-items items providers))
+      (when-let* ((provider (context-panels--item-provider item providers))
+		  (function (or (plist-get provider :render-side-item)
+				#'context-panels-render-side-item)))
+	(when (and rendered (> spacing 0))
+	  (unless (bolp) (insert "\n"))
+	  (insert (make-string spacing ?\n)))
+	(when (plist-get item :anchor-line)
+	  (context-panels--pad-to-viewport-row (plist-get item :anchor-line)))
+	(let ((start (point)))
+	  (funcall function source-buffer item)
+	  (context-panels--style-side-item start (point) source-buffer)
+	  (context-panels--annotate-side-item start (point) item)
+	  (setq rendered t))))))
 
 (defun context-panels-render-side-panel (source-buffer &optional source-window)
   "Render side panel contents for SOURCE-BUFFER.
@@ -1065,6 +1121,8 @@ visible viewport rows."
     (with-current-buffer source-buffer
       (setq context-panels--rendered-source-items
 	    (cons (buffer-chars-modified-tick) total-items)))
+    (setq-local truncate-lines nil
+		word-wrap t)
     (setq-local context-panels-mode-line-counts
 		(context-panels--format-mode-line-counts
 		 items viewport-items total-items providers)
