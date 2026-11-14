@@ -79,8 +79,11 @@ source-navigation behavior.
 
 Native row-local defaults bind `]c`, `[c` and `?` to row movement and
 `context-panels-describe-item`; explicit provider/button maps retain precedence.
-The help command uses a native help buffer and computes text in the originating
-panel context. A provider may declare `:item-help (SOURCE ITEM)` for roots and
+The help command toggles a native help window in the current frame. Invoking it
+again from the panel closes the visible help window through Emacs's native quit
+restoration. Both directions retain panel focus and point; opening computes text
+in the originating panel context, while closing does not collect or format item
+help again. A provider may declare `:item-help (SOURCE ITEM)` for roots and
 nested rows; an item-specific `:help` overrides it. Without a declaration, help
 shows the item and primary-reference jump, not another provider's actions.
 

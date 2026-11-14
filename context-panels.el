@@ -2,7 +2,7 @@
 
 ;; Author: Hubert Behaghel
 ;; Maintainer: Hubert Behaghel
-;; Version: 0.5.0
+;; Version: 0.5.1
 ;; Package-Requires: ((emacs "29.1"))
 ;; Keywords: tools, convenience
 ;; URL: https://github.com/behaghel/context-panels
@@ -653,10 +653,17 @@ A provider may supply :help text or a function taking SOURCE and ITEM."
 
 ;;;###autoload
 (defun context-panels-describe-item ()
-  "Show native help for the current row without executing an item action."
+  "Toggle native item help in this frame while retaining panel focus and point.
+Closing visible help does not collect providers or execute an item action."
   (interactive)
-  (let ((text (context-panels-item-help-text)))
-    (with-help-window "*Context Item Help*" (princ text))))
+  (save-selected-window
+    (if-let* ((window (get-buffer-window "*Context Item Help*" (selected-frame))))
+	(quit-window nil window)
+      (let ((text (context-panels-item-help-text))
+	    (help-window-select nil))
+	(with-help-window "*Context Item Help*"
+	  (princ text)
+	  (princ "\n\nInvoke item help again from the panel to close this window."))))))
 
 (defun context-panels-goto-item-key (key)
   "Move point to the context-panel item identified by KEY.
