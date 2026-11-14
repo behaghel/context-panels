@@ -1437,5 +1437,51 @@
 	  (should (equal (buffer-string)
 			 (concat (if (equal icon "✣") "✣" "📝") " note\n"))))))))
 
+(defvar context-panels-side-item-spacing)
+(defvar context-panels-side-item-body-indent)
+
+(ert-deftest context-panels-readable-items-have-scoped-spacing-and-wrapping ()
+  "Source-local spacing and body prefixes preserve item identity and maps."
+  (with-temp-buffer
+    (let ((source (current-buffer)))
+      (setq-local context-panels-side-item-spacing 1)
+      (setq-local context-panels-side-item-body-indent 2)
+      (context-panels-register-provider
+       (list :name 'notes :icon "✣"
+	     :collect-side-items
+	     (lambda (_) '((:id "one" :body "First body")
+			   (:id "two" :body "Second body")))))
+      (with-temp-buffer
+	(special-mode)
+	(setq-local context-panels-source-buffer source)
+	(context-panels-render-side-panel source)
+	(should-not truncate-lines)
+	(should word-wrap)
+	(should (string-match-p "First body\n\n✣ two" (buffer-string)))
+	(search-forward "First")
+	(should (equal (get-text-property (1- (point)) 'line-prefix) "  "))
+	(should (equal (get-text-property (1- (point)) 'wrap-prefix) "  "))
+	(should (equal (plist-get (context-panels-item-at-point) :id) "one"))
+	(search-forward "Second")
+	(should (equal (get-text-property (1- (point)) 'line-prefix) "  "))
+	(should (eq (key-binding (kbd "RET")) #'context-panels-jump-at-point))))))
+
+(ert-deftest context-panels-readable-items-preserve-list-continuation-prefix ()
+  "Body indentation composes with an existing list continuation prefix."
+  (with-temp-buffer
+    (let ((source (current-buffer)))
+      (setq-local context-panels-side-item-body-indent 2)
+      (context-panels-register-provider
+       (list :name 'custom :icon "✣"
+	     :collect-side-items (lambda (_) '((:id "list")))
+	     :render-side-item
+	     (lambda (_source _item)
+	       (insert "Header\n" (propertize "List body\n" 'wrap-prefix "  ")))))
+      (with-temp-buffer
+	(context-panels-render-side-panel source)
+	(search-forward "List")
+	(should (equal (get-text-property (1- (point)) 'line-prefix) "  "))
+	(should (equal (get-text-property (1- (point)) 'wrap-prefix) "    "))))))
+
 (provide 'context-panels-test)
 ;;; context-panels-test.el ends here

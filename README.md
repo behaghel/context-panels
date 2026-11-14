@@ -46,6 +46,22 @@ An Org provider can require `context-panels-org` and set `:render-side-item` to 
 
 Additional provider keys include `:jump-side-item`, `:collect-top-markers`, `:collect-bottom-views`, `:refresh-source-overlays`, `:cleanup-source-overlays`, `:follow-source-p`, `:side-panel-mode`, `:side-panel-buffer-name`, and `:side-panel-width`.
 
+### Readable side items
+
+Side panels wrap long body lines without changing their major-mode keybindings.
+Headers use `context-panels-item-heading-face` in addition to any provider faces,
+so provider colours and actions are retained.
+
+Version 0.3.0 adds source-buffer-local presentation controls:
+- `context-panels-side-item-spacing`: minimum blank lines between items, default 0.
+- `context-panels-side-item-body-indent`: display indentation below the first header line, default 0.
+
+For example, set these buffer-locally to 1 and 2 for separated, indented items.
+Existing list continuation prefixes compose with the body indentation. These
+controls change display properties, not semantic records, provider-specific
+formats, source order, or source text. Source-viewport padding can add further
+space when anchors are far apart.
+
 ### Synchronized focus
 
 Providers may opt into synchronized side/bottom focus with a `:synced-focus`
