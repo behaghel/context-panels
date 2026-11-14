@@ -1683,29 +1683,48 @@
 				 (context-panels-command-description
 				  #'context-panels-describe-item "Help")))))))
 
-(ert-deftest context-panels-item-help-displays-without-editing-origin ()
-  "Native help shows the retained item and preserves origin text and point."
+(ert-deftest context-panels-item-help-toggles-from-panel-without-editing-origin ()
+  "Help opens and closes from its panel while preserving focus, point and source."
   (save-window-excursion
     (with-temp-buffer
       (insert "Original source")
       (goto-char 4)
-      (let ((source (current-buffer)) (source-point (point)))
-	(context-panels-register-provider (list :name 'notes :icon "✣"))
+      (switch-to-buffer (current-buffer))
+      (let ((source (current-buffer)) (source-point (point))
+	    (source-window (selected-window))
+	    (panel-window (split-window-right))
+	    (help-window-select t)
+	    (calls 0))
+	(context-panels-register-provider
+	 (list :name 'notes :icon "✣"
+	       :item-help (lambda (&rest _) (cl-incf calls) "Jump to reference")))
 	(with-temp-buffer
 	  (setq-local context-panels-source-buffer source)
 	  (insert (propertize "A useful note.\n" 'context-panels-item
 			      '(:provider notes :body "A useful note.")))
-	  (switch-to-buffer (current-buffer))
+	  (set-window-buffer panel-window (current-buffer))
+	  (select-window panel-window)
 	  (goto-char 3)
-	  (let ((origin (current-buffer)) (position (point)) (tick (buffer-chars-modified-tick)))
+	  (let ((origin (current-buffer)) (position (point))
+		(tick (buffer-chars-modified-tick))
+		(source-start (window-start source-window)))
 	    (unwind-protect
 		(progn
 		  (context-panels-describe-item)
+		  (should (get-buffer-window "*Context Item Help*" (selected-frame)))
+		  (should (eq (selected-window) panel-window))
 		  (with-current-buffer "*Context Item Help*"
 		    (should (string-match-p "A useful note" (buffer-string))))
+		  (context-panels-describe-item)
+		  (should-not (get-buffer-window "*Context Item Help*" (selected-frame)))
+		  (should (eq (selected-window) panel-window))
+		  (should (eq (window-buffer panel-window) origin))
+		  (should (eq (window-buffer source-window) source))
+		  (should (= calls 1))
 		  (should (= position (with-current-buffer origin (point))))
 		  (should (= tick (buffer-chars-modified-tick origin)))
-		  (should (= source-point (with-current-buffer source (point)))))
+		  (should (= source-point (with-current-buffer source (point))))
+		  (should (= source-start (window-start source-window))))
 	      (when (get-buffer "*Context Item Help*")
 		(kill-buffer "*Context Item Help*")))))))))
 
