@@ -2,7 +2,7 @@
 
 Reusable Emacs context-panel primitives for source buffers.
 
-`context-panels.el` is mode-agnostic: providers register side items, source overlays, top markers, bottom views, renderers, and jump handlers. `context-panels-org.el` adds Org-specific defaults such as Org source detection and placing top markers after leading `#+KEY:` metadata.
+`context-panels.el` is mode-agnostic: providers register side items, source overlays, top markers, and bottom views. Standard rows and source-anchor jumps work from item data; custom renderers and jump handlers remain available. `context-panels-org.el` adds optional Org body formatting, Org source detection, and top-marker placement after leading `#+KEY:` metadata.
 
 ## Minimal plain-text provider
 
@@ -15,14 +15,8 @@ Reusable Emacs context-panel primitives for source buffers.
         :icon "📝"
         :collect-side-items
         (lambda (_source)
-          (list (list :id 'top :label "Top of buffer" :anchor-pos (point-min))))
-        :render-side-item
-        (lambda (_source item)
-          (insert (format "- %s\n" (plist-get item :label))))
-        :jump-side-item
-        (lambda (source item)
-          (pop-to-buffer source)
-          (goto-char (plist-get item :anchor-pos)))))
+          (list (list :id 'top :label "Top of buffer"
+                      :body "A plain-text note." :anchor-pos (point-min))))))
 
 (context-panels-register-provider (my-notes-provider))
 (context-panels-mode 1)
@@ -39,7 +33,16 @@ Reusable Emacs context-panel primitives for source buffers.
 
 ## Provider protocol
 
-Provider plists use a compact item-rendering protocol. Side-panel providers must declare `:name`, `:icon`, `:collect-side-items`, and `:render-side-item`. Whole-panel body renderers are intentionally unsupported: the side-panel body belongs only to provider-rendered rows so viewport alignment, highlighting, and mode-line counters stay consistent.
+Provider plists use a compact item-rendering protocol. Side-panel providers declare `:name`, `:icon`, and `:collect-side-items`. A collector returns semantic item plists; it does not need to precompute panel placement. Whole-panel body renderers are intentionally unsupported: the framework composes rows so viewport alignment, highlighting, and mode-line counters stay consistent.
+
+Standard rendering and navigation are available in version 0.2.0:
+- `:label` (falling back to `:id`) supplies the header; `:body` is plain text.
+- Item `:icon` overrides the provider icon. Optional `:icon-face` overrides `context-panels-item-icon-face`.
+- `:source-start`, `:target-start`, `:reference-pos`, or `:anchor-pos`, in that order, supplies the default jump target. Missing, inaccessible, or foreign-buffer anchors raise a user error without switching buffers.
+- Rows carry `context-panels-item` metadata and row-local terminal `RET`/graphical Return bindings. Existing provider/button keymaps, help text, and the panel's major-mode map are preserved; row bindings do not leak beyond the row.
+- Optional `:render-side-item` and `:jump-side-item` callbacks take priority over these defaults. Rich providers can keep their renderers and actions unchanged.
+
+An Org provider can require `context-panels-org` and set `:render-side-item` to `context-panels-org-render-side-item`. It reuses standard headers and interaction while fontifying only the body and indenting wrapped list continuations. It neither changes the panel major mode nor runs user Org mode hooks. `context-panels-org-insert-body` is also reusable from custom renderers; its formatting stays inside the inserted body.
 
 Additional provider keys include `:jump-side-item`, `:collect-top-markers`, `:collect-bottom-views`, `:refresh-source-overlays`, `:cleanup-source-overlays`, `:follow-source-p`, `:side-panel-mode`, `:side-panel-buffer-name`, and `:side-panel-width`.
 
