@@ -1728,5 +1728,38 @@
 	      (when (get-buffer "*Context Item Help*")
 		(kill-buffer "*Context Item Help*")))))))))
 
+(ert-deftest context-panels-close-uses-source-association-after-provider-name-changes ()
+  "Close the displayed source-associated panel rather than a new configured name."
+  (dolist (origin '(source panel))
+    (save-window-excursion
+      (with-temp-buffer
+	(insert "Source text\n")
+	(goto-char 4)
+	(switch-to-buffer (current-buffer))
+	(let* ((source (current-buffer))
+	       (position (point))
+	       (original-name (generate-new-buffer-name " *associated-panel*"))
+	       (replacement-name (generate-new-buffer-name " *configured-panel*"))
+	       panel)
+	  (unwind-protect
+	      (progn
+		(context-panels-register-provider
+		 (list :name 'notes :icon "N" :side-panel-buffer-name original-name))
+		(context-panels-mode 1)
+		(setq panel (context-panels-open source))
+		(context-panels-register-provider
+		 (list :name 'notes :icon "N" :side-panel-buffer-name replacement-name))
+		(if (eq origin 'panel)
+		    (select-window (get-buffer-window panel))
+		  (select-window (get-buffer-window source)))
+		(context-panels-close)
+		(should-not (get-buffer-window panel))
+		(should-not (buffer-local-value 'context-panels-side-panel-buffer source))
+		(should-not (buffer-local-value 'context-panels-side-panel-desired-p source))
+		(should (= position (with-current-buffer source (point))))
+		(should (get-buffer-window source)))
+	    (with-current-buffer source (context-panels-mode -1))
+	    (when (buffer-live-p panel) (kill-buffer panel))))))))
+
 (provide 'context-panels-test)
 ;;; context-panels-test.el ends here

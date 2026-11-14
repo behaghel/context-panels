@@ -69,6 +69,14 @@ The optional Org library provides `context-panels-org-render-item-body` for the
 body callback. Providers retain semantic labels, statuses, authors and actions;
 the framework does not define a taxonomy or infer comment workflows from notes.
 
+### Closing the associated side panel
+
+Closing from a source or its side panel uses the source's live panel association.
+Provider buffer-name preferences may change after opening; they do not replace
+that association or redirect closing to a newly configured name. Closing clears
+the source's association and desired-side-panel state as well as the displayed
+panel window. The configured-name fallback is used only without a live association.
+
 ### Rendered-row navigation and item help
 
 `context-panels-next-row` and `context-panels-previous-row` traverse the retained
