@@ -235,5 +235,73 @@
 	   (should (equal before (window-tree)))
 	   (should (eq (window-buffer extra) (current-buffer)))))))))
 
+(ert-deftest context-panels-footer-owned-pane-scrolls-and-closes-with-its-view ()
+  "An explicitly owned editor stays fixed, closes with the view and keeps text."
+  (let ((input (generate-new-buffer " *owned input*")))
+    (unwind-protect
+	(context-panels-footer-test--panel
+	 (let* ((body (get-buffer-window panel))
+		(footer (context-panels-footer-window panel))
+		(pane (context-panels-footer-display-pane body input 5))
+		(edges (window-edges pane)))
+	   (with-current-buffer input (insert "An unsent draft."))
+	   (should (eq pane (context-panels-footer-display-pane body input 5)))
+	   (with-current-buffer panel
+	     (goto-char (point-min)) (forward-line 40)
+	     (set-window-start body (point)))
+	   (context-panels-footer-update panel)
+	   (should (equal edges (window-edges pane)))
+	   (with-selected-window footer (call-interactively (key-binding (kbd "a"))))
+	   (should (eq (caar context-panels-footer-test--calls) panel))
+	   (with-current-buffer panel (context-panels-close-bottom-view))
+	   (should-not (window-live-p pane))
+	   (should-not (window-live-p footer))
+	   (should (equal "An unsent draft." (with-current-buffer input (buffer-string))))))
+      (when (buffer-live-p input) (kill-buffer input)))))
+
+(ert-deftest context-panels-footer-owned-pane-survives-native-state-restoration ()
+  "Native snapshots retain declared ownership but do not claim ordinary copies."
+  (let ((input (generate-new-buffer " *restored input*")))
+    (unwind-protect
+	(context-panels-footer-test--panel
+	 (let* ((body (get-buffer-window panel))
+		(pane (context-panels-footer-display-pane body input 5))
+		(footer-buffer (window-buffer (context-panels-footer-window panel)))
+		(state (read (prin1-to-string (window-state-get (frame-root-window) t)))))
+	   (context-panels-footer-delete-view body)
+	   (window-state-put state (frame-root-window) 'safe)
+	   (setq body (get-buffer-window panel))
+	   (should (eq (get-buffer-window input)
+		       (context-panels-footer-display-pane body input 5)))
+	   (with-current-buffer panel (context-panels-close-bottom-view))
+	   (should-not (get-buffer-window input))
+	   (should-not (get-buffer-window footer-buffer))
+	   (should-not (window-live-p pane))))
+      (when (buffer-live-p input) (kill-buffer input)))))
+
+(ert-deftest context-panels-footer-owned-pane-refuses-an-unrelated-extra-window ()
+  "Declared pane ownership does not authorize deleting any other sibling."
+  (let ((input (generate-new-buffer " *guarded input*")))
+    (unwind-protect
+	(context-panels-footer-test--panel
+	 (let* ((body (get-buffer-window panel))
+		(pane (context-panels-footer-display-pane body input 5))
+		(ignore-window-parameters t)
+		(extra (progn
+			 ;; Model a workspace rearrangement without native side
+			 ;; classification; explicit view ownership still applies.
+			 (dolist (window (list body pane (context-panels-footer-window panel)
+					       (window-parent body)))
+			   (set-window-parameter window 'window-side nil))
+			 (split-window pane nil 'right))))
+	   (set-window-dedicated-p extra nil)
+	   (set-window-buffer extra source)
+	   (let ((before (window-tree)))
+	     (should-error (context-panels-footer-delete-view body) :type 'user-error)
+	     (should (equal before (window-tree)))
+	     (should (window-live-p pane))
+	     (should (eq source (window-buffer extra))))))
+      (when (buffer-live-p input) (kill-buffer input)))))
+
 (provide 'context-panels-footer-test)
 ;;; context-panels-footer-test.el ends here
