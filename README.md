@@ -241,7 +241,7 @@ when a view is displayed or its source provider registry changes.
 Same-session native window-state restoration preserves managed panel roles,
 point, scrolling and the selected source/body/footer without re-rendering provider
 content. Footer ownership and tab/control caches are rebound to restored windows
-only for a validated owned pair; ordinary copies of a panel buffer remain ordinary.
+only for a validated owned group; ordinary copies of a panel buffer remain ordinary.
 Window state stores a serializable role flag, not live window references or action
 closures. Closed views stay closed. This applies to surviving same-session buffers,
 not reconstruction of application state; no account, playback or capture
@@ -269,6 +269,15 @@ space permits and receives its own line when needed. Action keys are accented,
 labels are neutral, and primary actions use a theme-derived success face. The
 footer has a background-only surface, 16-pixel separation above it and 8-pixel
 inner padding in graphical frames. Terminal frames retain native text controls.
+
+A provider can add one fixed, independently editable pane between its body and
+footer with `context-panels-footer-display-pane BODY-WINDOW BUFFER HEIGHT`.
+Context Panels owns the flat window group, sizing, protection and close/restore
+behavior; the provider owns the pane's text and commands. Repeated calls reuse
+the pane, and closing the view removes its windows without killing the pane
+buffer. Ownership survives native same-session window-state restoration. Only
+the body, explicitly registered pane and footer belong to that group; an
+additional or unregistered window still prevents group deletion.
 
 `context-panels-footer-update` refreshes the footer of a visible body buffer
 without opening a closed view or changing focus. The shared presentation has no
