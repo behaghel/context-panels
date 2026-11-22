@@ -1,0 +1,3 @@
+{
+  agentSession.enable = true;
+}

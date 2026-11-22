@@ -1,0 +1,10 @@
+inputs:
+  devenv:
+    url: github:cachix/devenv/v2.4.0?dir=src/modules
+  nixpkgs:
+    url: github:NixOS/nixpkgs/nixos-25.11
+  nixos-config:
+    url: github:behaghel/nixos-config/6a729a66d072fc4a683407bb1c9ea1384e0ac33e
+    flake: false
+imports:
+  - nixos-config/modules/flake/agent-session

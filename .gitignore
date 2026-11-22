@@ -1,0 +1,7 @@
+/.worktrees/
+/.devenv/
+/.devenv.flake.nix
+/.devenv.local.nix
+/.devenv.local.yaml
+/.direnv/
+/.envrc.local
