@@ -264,8 +264,10 @@ Actions are plists with `:key`, `:label`, and interactive `:command`. Optional
 command to select its destination. Commands run in the body buffer and window,
 not in the footer's buffer. Declaring a footer does not rebind the body's keys.
 
-Metadata is optional text, such as a count and duration. It is right-aligned when
-space permits and receives its own line when needed. Action keys are accented,
+Metadata is optional text, such as a count and duration. By default it is
+right-aligned when space permits. A provider can set `:metadata-leading t` in
+its footer descriptor to put metadata on the left and shortcuts on the right.
+Metadata gets its own line if the two groups do not fit. Action keys are accented,
 labels are neutral, and primary actions use a theme-derived success face. The
 footer has a background-only surface, 16-pixel separation above it and 8-pixel
 inner padding in graphical frames. Terminal frames retain native text controls.

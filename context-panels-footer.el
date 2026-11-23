@@ -57,12 +57,35 @@
 		      'context-panels-footer-role role)
 	  (propertize "\n" 'line-height t)))
 
-(defun context-panels-footer--render (body actions metadata)
-  "Render ACTIONS and optional METADATA for BODY in the current footer buffer."
+(defun context-panels-footer--align-actions (rows metadata padding footer columns graphic)
+  "Align shortcut ROWS right, with METADATA leading the first row.
+PADDING, FOOTER, COLUMNS and GRAPHIC describe the current footer layout."
+  (let ((first (car (last rows))))
+    (save-excursion
+      ;; Visit bottom to top so inserting a gap does not invalidate earlier rows.
+      (dolist (start rows)
+        (goto-char start)
+        (let* ((actions (buffer-substring start (line-end-position)))
+               (leading (and (= start first) metadata))
+               (gap (if graphic
+                        (- (window-body-width footer t) 8 (string-pixel-width actions))
+                      (- columns (string-width actions)))))
+          (when leading
+            (insert leading)
+            (when (if graphic (> (+ 32 (string-pixel-width leading)) gap)
+                    (> (+ 3 (string-width leading)) gap))
+              (insert "\n" padding)
+              (setq leading nil)))
+          (if graphic
+              (insert (propertize " " 'display `(space :align-to (,(max 8 gap)))))
+            (insert (make-string (max 0 (- gap (if leading (string-width leading) 0))) ?\s))))))))
+
+(defun context-panels-footer--render (body actions metadata &optional metadata-leading)
+  "Render ACTIONS and METADATA for BODY, optionally with METADATA-LEADING."
   (let* ((footer (window-parameter body 'context-panels-footer-window))
 	 (graphic (display-graphic-p (window-frame body)))
 	 (columns (max 8 (- (window-body-width footer) 2)))
-	 (map (make-sparse-keymap)) (used 0) wrapped line-start
+	 (map (make-sparse-keymap)) (used 0) wrapped line-start rows
 	 (padding (if graphic (propertize " " 'display '(space :width (8))) " ")))
     (let ((inhibit-read-only t))
       (erase-buffer)
@@ -71,12 +94,14 @@
 	(when graphic (context-panels-footer--space 8 'padding))
 	(insert padding)
 	(setq line-start (point))
+        (push line-start rows)
 	(dolist (action actions)
 	  (let* ((key (plist-get action :key))
 		 (label (concat key " " (plist-get action :label)))
 		 (command (lambda () (interactive) (context-panels-footer--invoke body action))))
 	    (when (> (+ used (string-width label) 3) columns)
-	      (insert "\n" padding) (setq used 0 wrapped t line-start (point)))
+	      (insert "\n" padding) (setq used 0 wrapped t line-start (point))
+              (push line-start rows))
 	    (when (> used 0) (insert "   ") (cl-incf used 3))
 	    (let ((button-start (point)))
 	      (insert-text-button label 'follow-link t
@@ -86,9 +111,12 @@
 	      (add-face-text-property button-start (+ button-start (length key)) 'context-panels-footer-key))
 	    (define-key map (kbd key) command)
 	    (cl-incf used (string-width label))))
-	(when (and (stringp metadata) (not (string-empty-p metadata)))
-	  (let ((text (propertize metadata 'face 'context-panels-footer-metadata
-				  'context-panels-footer-role 'metadata)))
+	(let ((text (and (stringp metadata) (not (string-empty-p metadata))
+                         (propertize metadata 'face 'context-panels-footer-metadata
+                                    'context-panels-footer-role 'metadata))))
+          (cond
+           (metadata-leading (context-panels-footer--align-actions rows text padding footer columns graphic))
+           (text
 	    (if graphic
 		(let* ((pixels (string-pixel-width text))
 		       (x (max 8 (- (window-body-width footer t) 8 pixels))))
@@ -97,7 +125,7 @@
 		  (insert (propertize " " 'display `(space :align-to (,x))) text))
 	      (when (or wrapped (> (+ used (string-width metadata) 3) columns))
 		(insert "\n" padding) (setq used 0))
-	      (insert (make-string (max 0 (- columns used (string-width metadata))) ?\s) text))))
+	      (insert (make-string (max 0 (- columns used (string-width metadata))) ?\s) text)))))
 	(insert "\n")
 	(when graphic (context-panels-footer--space 8 'padding))
 	(let ((surface (make-overlay start (point))))
@@ -430,18 +458,19 @@ Never delete a surrounding group containing an unrelated window."
 			 (when-let* ((function (plist-get view :footer)))
 			   (funcall function context-panels-source-buffer view)))))
 	       (actions (plist-get data :actions))
-	       (metadata (plist-get data :metadata)))
+	       (metadata (plist-get data :metadata))
+               (metadata-leading (plist-get data :metadata-leading)))
 	  (unless (cl-find "q" actions :test #'equal :key (lambda (action) (plist-get action :key)))
 	    (setq actions (append actions '((:key "q" :label "Close" :command context-panels-close-bottom-view :select t)))))
 	  (let* ((footer (context-panels-footer--ensure body))
-		 (signature (list body actions metadata (window-body-width footer)
+		 (signature (list body actions metadata metadata-leading (window-body-width footer)
 				  (frame-char-height (window-frame body))
 				  (face-background 'mode-line-inactive (window-frame body) t)
 				  (face-background 'default (window-frame body) t))))
 	    (with-current-buffer (window-buffer footer)
 	      (unless (equal signature context-panels-footer--signature)
 		(setq context-panels-footer--signature signature)
-		(context-panels-footer--render body actions metadata)
+		(context-panels-footer--render body actions metadata metadata-leading)
 		(let* ((minimum (* 2 (frame-char-height (window-frame body))))
 		       (height (max minimum (cdr (window-text-pixel-size footer (point-min) (point-max)))))
 		       (delta (- height (window-body-height footer t))))
