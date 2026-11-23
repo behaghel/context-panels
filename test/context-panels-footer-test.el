@@ -82,6 +82,22 @@
      (should-not (get-buffer-window panel))
      (should (eq (window-main-window) source-window)))))
 
+(ert-deftest context-panels-footer-can-lead-with-metadata ()
+  "A provider can put scope on the left and its working shortcuts on the right."
+  (context-panels-footer-test--panel
+   (let* ((body (get-buffer-window panel))
+          (footer (context-panels-footer-window panel))
+          (actions '((:key "a" :label "Enqueue" :command context-panels-footer-test--action))))
+     (with-current-buffer (window-buffer footer)
+       (context-panels-footer--render body actions "Scope" t)
+       (should (looking-at-p " Scope +a Enqueue$"))
+       (should (= (string-width (buffer-substring (point-min) (line-end-position)))
+                  (1- (window-body-width footer))))
+       (context-panels-footer--render body actions (make-string (- (window-body-width footer) 2) ?x) t)
+       (should (looking-at-p " x+\n +a Enqueue$")))
+     (with-selected-window footer (call-interactively (key-binding (kbd "a"))))
+     (should (eq (caar context-panels-footer-test--calls) panel)))))
+
 (ert-deftest context-panels-footer-commands-use-the-body-not-the-footer ()
   "A footer key acts on the existing browsing row, never a footer buffer point."
   (context-panels-footer-test--panel
