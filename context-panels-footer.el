@@ -118,20 +118,50 @@
 (defvar-local context-panels-footer--lateral-buffer nil
   "Retained identity of the independently scrollable pane beside the body.")
 
+(declare-function context-panels-tabs-update "context-panels-tabs" (window))
+(declare-function context-panels-view-navigation-mode "context-panels-tabs" (&optional arg))
+
+(defvar-local context-panels-footer--tabs-buffer nil
+  "Retained identity of the full-width tab row.")
+
+(defun context-panels-footer--owned-leaf-p (window buffer)
+  "Whether WINDOW is a protected leaf displaying BUFFER."
+  (and (window-live-p window) (window-parameter window 'context-panels-protected)
+       (eq (window-buffer window) buffer)))
+
+(defun context-panels-footer--body-column (body root)
+  "Return BODY or its declared input stack within ROOT."
+  (let ((parent (window-parent body)) (input (window-next-sibling body)))
+    (if (and parent (not (eq parent root)) (eq body (window-top-child parent))
+             (context-panels-footer--owned-leaf-p
+              input (buffer-local-value 'context-panels-footer--pane-buffer (window-buffer body)))
+             (not (window-next-sibling input))) parent body)))
+
 (defun context-panels-footer--body-row (body root)
-  "Return BODY or its exactly owned horizontal row inside ROOT."
-  (let* ((parent (window-parent body))
-         (peer (window-next-sibling body)))
+  "Return BODY or its exactly owned composition inside ROOT."
+  (let* ((column (context-panels-footer--body-column body root))
+         (row (window-parent column))
+         (peer (window-next-sibling column)))
     (cond
-     ((eq parent root) body)
-     ((and parent (eq (window-parent parent) root)
-           (eq (window-left-child parent) body)
-           (window-live-p peer)
-           (not (window-next-sibling peer))
-           (window-parameter peer 'context-panels-protected)
-           (eq (window-buffer peer)
-               (buffer-local-value 'context-panels-footer--lateral-buffer (window-buffer body))))
-      parent))))
+     ((eq row root) column)
+     ((and row (eq (window-parent row) root) (eq (window-left-child row) column)
+           (context-panels-footer--owned-leaf-p
+            peer (buffer-local-value 'context-panels-footer--lateral-buffer (window-buffer body)))
+           (not (window-next-sibling peer))) row))))
+
+(defun context-panels-footer--tab-host (body)
+  "Return BODY's validated full-width tab host, if any."
+  (when-let* ((buffer (buffer-local-value 'context-panels-footer--tabs-buffer (window-buffer body)))
+              ((buffer-live-p buffer))
+              (footer (context-panels-footer-restore-window body))
+              (root (window-parent footer))
+              (row (context-panels-footer--body-row body root))
+              (top (window-child root)))
+    (when (and (eq (window-next-sibling top) row)
+               (context-panels-footer--owned-leaf-p
+                top buffer))
+      (set-window-parameter top 'context-panels-footer-body body)
+      top)))
 
 (defun context-panels-footer--owned-view-root (body footer)
   "Return the exact owned BODY/FOOTER group and its declared panes.
@@ -142,7 +172,12 @@ Any unregistered or additional window makes the surrounding group unowned."
 	   (next (and row (window-next-sibling row)))
 	   (pane-buffer (buffer-local-value 'context-panels-footer--pane-buffer
 					    (window-buffer body))))
-      (when (and row (eq (window-child root) row)
+      (when (and row
+                 (or (eq (window-child root) row)
+                     (let ((top (window-child root)))
+                       (and (eq (window-next-sibling top) row)
+                            (context-panels-footer--owned-leaf-p top
+                             (buffer-local-value 'context-panels-footer--tabs-buffer (window-buffer body))))))
 		 (not (window-next-sibling footer))
 		 (or (eq next footer)
 		     (and (window-live-p next)
@@ -150,6 +185,23 @@ Any unregistered or additional window makes the surrounding group unowned."
 			  (window-parameter next 'context-panels-protected)
 			  (eq (window-buffer next) pane-buffer))))
 	root))))
+
+(defun context-panels-footer--rearrange (root function)
+  "Apply FUNCTION inside ROOT, restoring Emacs's direct-child side flags."
+  (let ((side (window-parameter root 'window-side))
+        (slot (window-parameter root 'window-slot))
+        (ignore-window-parameters t))
+    (unwind-protect
+        (progn
+          (walk-window-subtree (lambda (part) (set-window-parameter part 'window-side nil)) root t)
+          (funcall function))
+      (walk-window-subtree
+       (lambda (part)
+         (set-window-parameter part 'window-side
+                               (and (or (eq part root) (eq (window-parent part) root)) side))
+         (set-window-parameter part 'window-slot slot)
+         (set-window-parameter part 'window-atom t)
+         (set-window-parameter part 'no-delete-other-windows t)) root t))))
 
 (defun context-panels-footer-display-pane (body buffer height)
   "Display owned BUFFER below BODY, above its footer, initially HEIGHT lines.
@@ -161,34 +213,22 @@ not BUFFER; the provider retains its text.  Unrelated windows are never adopted.
 	 (source (and (window-live-p body)
 		      (buffer-local-value 'context-panels-source-buffer (window-buffer body))))
          (row (and root (context-panels-footer--body-row body root)))
-	 (pane (and row (not (eq (window-next-sibling row) footer))
-		    (window-next-sibling row))))
+         (next (and row (window-next-sibling body)))
+         (pane (and (context-panels-footer--owned-leaf-p
+                     next (buffer-local-value 'context-panels-footer--pane-buffer (window-buffer body))) next)))
     (unless root (user-error "Cannot add a pane to an unowned panel layout"))
     (when (memq buffer (list (window-buffer body) (window-buffer footer)))
       (user-error "An owned pane must have its own buffer"))
     (unless (window-live-p pane)
-      (let ((dedicated (window-dedicated-p body))
-	    (side (window-parameter root 'window-side))
-	    (slot (window-parameter root 'window-slot)))
-	(unwind-protect
-	    (progn
-	      ;; Side windows must remain flat siblings.  Split this verified
-	      ;; owned body inside its atom, rather than nesting another atom.
-	      ;; Clear side classification only during the synchronous split.
-	      (dolist (part (delete-dups (list root row body footer)))
-		(set-window-parameter part 'window-side nil))
-	      (set-window-dedicated-p body nil)
-	      (let ((ignore-window-parameters t)
-		    (window-combination-limit nil))
-		(setq pane (split-window row (- height) 'below)))
-	      (set-window-parameter pane 'window-atom 'below))
-	  (set-window-dedicated-p body dedicated)
-	  (dolist (part (delete-dups
-			 (list root row body footer (window-parent row) (window-next-sibling row))))
-	    (when (and part (window-valid-p part))
-	      (set-window-parameter part 'window-side
-                                    (and (or (eq root part) (eq (window-parent part) root)) side))
-	      (set-window-parameter part 'window-slot slot)))))
+      (let ((dedicated (window-dedicated-p body)))
+        (context-panels-footer--rearrange
+         root (lambda ()
+                (unwind-protect
+                    (progn
+                      (set-window-dedicated-p body nil)
+                      (let ((window-combination-limit nil))
+                        (setq pane (split-window body (- height) 'below))))
+                  (set-window-dedicated-p body dedicated)))))
       (unless (window-live-p pane) (error "Unable to display the owned panel pane")))
     (unless (eq (window-buffer pane) buffer)
       (set-window-parameter pane 'context-panels-panel-buffer buffer)
@@ -196,46 +236,67 @@ not BUFFER; the provider retains its text.  Unrelated windows are never adopted.
       (set-window-buffer pane buffer))
     (with-current-buffer (window-buffer body) (setq context-panels-footer--pane-buffer buffer))
     (with-current-buffer buffer (setq-local context-panels-source-buffer source))
-    (dolist (part (list pane (window-parent pane)))
-      (set-window-parameter part 'window-side (window-parameter root 'window-side))
-      (set-window-parameter part 'window-slot (window-parameter root 'window-slot))
-      (set-window-parameter part 'no-delete-other-windows t))
     (context-panels-protect-window pane buffer source)
     (window-preserve-size pane nil t)
     pane))
 
 (defun context-panels-footer-display-lateral-pane (body buffer width)
   "Display owned BUFFER to the right of BODY, WIDTH columns wide.
-The input and footer, if present, remain full width.  Return nil when
-WIDTH would leave too little room for BODY.  Never adopt unrelated windows."
+The input ends at the same edge as BODY; tabs and footer span both columns.
+Return nil when WIDTH would leave too little room.
+Never adopt unrelated windows."
   (unless (buffer-live-p buffer) (user-error "Owned lateral buffer is not live"))
+  (unless (and (integerp width) (>= width 2)) (user-error "Invalid lateral pane width"))
   (let* ((footer (context-panels-footer-restore-window body))
          (root (and footer (context-panels-footer--owned-view-root body footer)))
          (row (and root (context-panels-footer--body-row body root)))
-         (rail (and row (not (eq row body)) (window-next-sibling body)))
-         (input (and row (window-next-sibling row))))
+         (column (and row (context-panels-footer--body-column body root)))
+         (rail (and column (not (eq row column)) (window-next-sibling column)))
+         (next (window-next-sibling body))
+         (input (and (context-panels-footer--owned-leaf-p
+                      next (buffer-local-value 'context-panels-footer--pane-buffer (window-buffer body))) next)))
     (unless root (user-error "Cannot add a lateral pane to an unowned panel layout"))
-    (when (memq buffer (mapcar #'window-buffer (list body input footer)))
+    (when (memq buffer (mapcar #'window-buffer (delq nil (list body input footer))))
       (user-error "An owned lateral pane must have its own buffer"))
-    (when (and (not rail) (>= (- (window-total-width body) width) window-min-width))
-      (let ((dedicated (window-dedicated-p body))
-            (side (window-parameter body 'window-side))
-            (slot (window-parameter body 'window-slot)))
-        (unwind-protect
-            (progn
-              (dolist (part (delete-dups (list root body input footer)))
-                (set-window-parameter part 'window-side nil))
-              (set-window-dedicated-p body nil)
-              (let ((ignore-window-parameters t) (window-combination-limit t))
-                (setq rail (split-window body (- width) 'right))))
-          (set-window-dedicated-p body dedicated)
-          (dolist (part (delete-dups (delq nil (list root body input footer rail (window-parent body)))))
-            (set-window-parameter part 'window-side
-                                  (and (or (eq part root) (eq (window-parent part) root)) side))
-            (set-window-parameter part 'window-slot slot)))
-        (set-window-parameter rail 'window-atom t)
-        (set-window-parameter (window-parent body) 'window-atom t)
-        (set-window-parameter (window-parent body) 'no-delete-other-windows t)))
+    (when (and (not rail) (>= (- (window-total-width body) width) window-min-width)
+               (> (window-total-height body) 3))
+      (let* ((dedicated (window-dedicated-p body))
+             (replace-input (and input (eq column body)))
+             (input-buffer (and replace-input (window-buffer input)))
+             (input-height (and replace-input (window-total-height input)))
+             (input-selected (eq input (selected-window)))
+             top)
+        (context-panels-footer--rearrange
+         root (lambda ()
+                (unwind-protect
+                    (progn
+                      (when replace-input (delete-window input))
+                      (set-window-dedicated-p body nil)
+                      (let ((window-combination-limit nil))
+                        (setq rail (split-window column (- width) 'right))
+                        (setq top (split-window (window-parent rail) -2 'above))))
+                  (set-window-dedicated-p body dedicated))))
+        (let* ((host (with-current-buffer (window-buffer body)
+                       (unless (buffer-live-p context-panels-footer--tabs-buffer)
+                         (setq context-panels-footer--tabs-buffer (generate-new-buffer " *Context Panel Tabs*"))
+                         (with-current-buffer context-panels-footer--tabs-buffer
+                           (setq buffer-read-only t)
+                           (context-panels-view-navigation-mode 1)))
+                       (setq context-panels-footer--lateral-buffer buffer)
+                       context-panels-footer--tabs-buffer))
+               (source (buffer-local-value 'context-panels-source-buffer (window-buffer body))))
+          (set-window-dedicated-p top nil)
+          (set-window-buffer top host)
+          (dolist (key '(mode-line-format header-line-format)) (set-window-parameter top key 'none))
+          (context-panels-protect-window top host source)
+          (set-window-dedicated-p rail nil)
+          (set-window-buffer rail buffer)
+          (context-panels-protect-window rail buffer source)
+          (window-preserve-size top nil t)
+          (when input-buffer
+            (let ((new-input (context-panels-footer-display-pane body input-buffer input-height)))
+              (when input-selected (select-window new-input))))
+          (context-panels-tabs-update body))))
     (when (window-live-p rail)
       (unless (eq buffer (window-buffer rail))
         (set-window-dedicated-p rail nil)
@@ -252,20 +313,15 @@ WIDTH would leave too little room for BODY.  Never adopt unrelated windows."
   (when-let* ((footer (context-panels-footer-restore-window body))
               (root (context-panels-footer--owned-view-root body footer))
               (row (context-panels-footer--body-row body root)))
-    (unless (eq row body)
-      (let ((ignore-window-parameters t)
-            (side (window-parameter root 'window-side))
-            (input (window-next-sibling row)))
-        (unwind-protect
-            (progn
-              ;; Deleting the peer promotes BODY to a direct child.  Do not
-              ;; expose mismatched side flags during that structural change.
-              (dolist (part (delete-dups (list root row input footer)))
-                (set-window-parameter part 'window-side nil))
-              (delete-window (window-next-sibling body)))
-          (dolist (part (delete-dups (list root (context-panels-footer--body-row body root) input footer)))
-            (when (and part (window-valid-p part))
-              (set-window-parameter part 'window-side side))))))))
+    (let* ((column (context-panels-footer--body-column body root))
+           (rail (and (not (eq row column)) (window-next-sibling column)))
+           (top (context-panels-footer--tab-host body)))
+      (when (window-live-p rail)
+        (context-panels-footer--rearrange
+         root (lambda ()
+                (when (window-live-p top) (delete-window top))
+                (delete-window rail)))
+        (context-panels-tabs-update body)))))
 
 (defun context-panels-footer-restore-window (body)
   "Rebind BODY to its retained footer after native window-state restoration.
@@ -325,7 +381,9 @@ Never delete a surrounding group containing an unrelated window."
     (when-let* ((footer (context-panels-footer-restore-window body)))
       (let ((buffer (window-buffer footer)))
 	(context-panels-footer-delete-view body)
-	(when (buffer-live-p buffer) (kill-buffer buffer))))))
+	(when (buffer-live-p buffer) (kill-buffer buffer)))))
+  (when (buffer-live-p context-panels-footer--tabs-buffer)
+    (kill-buffer context-panels-footer--tabs-buffer)))
 
 (defun context-panels-footer--ensure (body)
   "Create BODY's native footer without resizing the overall panel group."

@@ -274,8 +274,8 @@ A provider can add one fixed, independently editable pane between its body and
 footer with `context-panels-footer-display-pane BODY-WINDOW BUFFER HEIGHT`.
 For a narrow navigation or companion view, use
 `context-panels-footer-display-lateral-pane BODY-WINDOW BUFFER WIDTH`. It
-places a protected pane on the right of the body, leaving any input pane and
-footer full width. It returns nil if there is insufficient room to open it.
+places a protected pane on the right of the body and input. The native tabs
+and footer span both columns. It returns nil if there is insufficient room to open it.
 `context-panels-footer-hide-lateral-pane BODY-WINDOW` closes only the companion
 window, keeping its buffer and the rest of the bottom view intact.
 Context Panels owns the flat window group, sizing, protection and close/restore
