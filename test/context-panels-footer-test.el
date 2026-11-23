@@ -279,6 +279,42 @@
 	   (should-not (window-live-p pane))))
       (when (buffer-live-p input) (kill-buffer input)))))
 
+(ert-deftest context-panels-footer-lateral-pane-coexists-with-input-and-restores ()
+  "The lateral pane joins the body, leaving the input and footer full width."
+  (let ((input (generate-new-buffer " *owned input*"))
+        (index (generate-new-buffer " *owned index*")))
+    (unwind-protect
+        (context-panels-footer-test--panel
+         (let* ((body (get-buffer-window panel))
+                (footer-buffer (window-buffer (context-panels-footer-window panel)))
+                (rail (progn
+                        (should-not (context-panels-footer-display-lateral-pane
+                                     body index (window-total-width body)))
+                        (context-panels-footer-display-lateral-pane body index 18)))
+                (input-window (context-panels-footer-display-pane body input 5)))
+           (should (window-live-p rail))
+           (should (= 18 (window-total-width rail)))
+           (should (eq rail (window-next-sibling body)))
+           (should (eq input-window (context-panels-footer-display-pane body input 5)))
+           (should (= (window-total-width input-window)
+                      (+ (window-total-width body) (window-total-width rail))))
+           (context-panels-footer-hide-lateral-pane body)
+           (should-not (window-live-p rail))
+           (should (window-live-p input-window))
+           (should (window-live-p (context-panels-footer-display-lateral-pane body index 18)))
+           (let ((state (read (prin1-to-string (window-state-get (frame-root-window) t)))))
+             (context-panels-footer-delete-view body)
+             (window-state-put state (frame-root-window) 'safe))
+           (setq body (get-buffer-window panel))
+           (should (eq (get-buffer-window index)
+                       (context-panels-footer-display-lateral-pane body index 18)))
+           (context-panels-footer-delete-view body)
+           (should-not (get-buffer-window index))
+           (should-not (get-buffer-window input))
+           (should-not (get-buffer-window footer-buffer))))
+      (kill-buffer input)
+      (kill-buffer index))))
+
 (ert-deftest context-panels-footer-owned-pane-refuses-an-unrelated-extra-window ()
   "Declared pane ownership does not authorize deleting any other sibling."
   (let ((input (generate-new-buffer " *guarded input*")))
