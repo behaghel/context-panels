@@ -174,6 +174,8 @@
 			      part))
 	       else collect part))))
 
+(declare-function context-panels-footer--tab-host "context-panels-footer" (body))
+
 (defun context-panels-tabs-update (window)
   "Retain all provider tabs for managed body WINDOW without painting a view."
   (when (and (window-live-p window) (window-parameter window 'context-panels-protected))
@@ -192,9 +194,13 @@
 				(cons 'select (lambda () (context-panels-tabs-select key source)))))) views)))
 	  (setq tabs (append tabs (list (list '(name . " Views · C-c v ") '(chooser . t)
 					      (cons 'select (lambda () (context-panels-tabs-choose source)))))))
-	  (set-window-parameter window 'context-panels-tabs tabs)
-	  (set-window-parameter window 'tab-line-cache nil)
-	  (set-window-parameter window 'tab-line-format '((:eval (context-panels-tabs-format)))))))))
+          (let ((host (or (and (fboundp 'context-panels-footer--tab-host)
+                               (context-panels-footer--tab-host window)) window)))
+            (unless (eq host window)
+              (set-window-parameter window 'tab-line-format 'none))
+            (set-window-parameter host 'context-panels-tabs tabs)
+            (set-window-parameter host 'tab-line-cache nil)
+            (set-window-parameter host 'tab-line-format '((:eval (context-panels-tabs-format))))))))))
 
 (defun context-panels-tabs-registry-changed (source)
   "Refresh cached tabs in visible views belonging to SOURCE after registry edits."

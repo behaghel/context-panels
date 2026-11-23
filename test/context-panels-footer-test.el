@@ -280,24 +280,34 @@
       (when (buffer-live-p input) (kill-buffer input)))))
 
 (ert-deftest context-panels-footer-lateral-pane-coexists-with-input-and-restores ()
-  "The lateral pane joins the body, leaving the input and footer full width."
+  "The rail spans body and input, between full-width native chrome."
   (let ((input (generate-new-buffer " *owned input*"))
         (index (generate-new-buffer " *owned index*")))
     (unwind-protect
         (context-panels-footer-test--panel
          (let* ((body (get-buffer-window panel))
                 (footer-buffer (window-buffer (context-panels-footer-window panel)))
+                (prior-input (context-panels-footer-display-pane body input 5))
                 (rail (progn
+                        (with-current-buffer input (insert "Unsent draft."))
                         (should-not (context-panels-footer-display-lateral-pane
                                      body index (window-total-width body)))
                         (context-panels-footer-display-lateral-pane body index 18)))
                 (input-window (context-panels-footer-display-pane body input 5)))
            (should (window-live-p rail))
+           (should-not (window-live-p prior-input))
+           (should (equal "Unsent draft." (with-current-buffer input (buffer-string))))
            (should (= 18 (window-total-width rail)))
-           (should (eq rail (window-next-sibling body)))
+           (should (eq rail (window-next-sibling (window-parent body))))
            (should (eq input-window (context-panels-footer-display-pane body input 5)))
-           (should (= (window-total-width input-window)
-                      (+ (window-total-width body) (window-total-width rail))))
+           (should (= (window-total-width input-window) (window-total-width body)))
+           (should (= (window-total-height rail)
+                      (+ (window-total-height body) (window-total-height input-window))))
+           (let ((top (context-panels-footer--tab-host body)))
+             (should (window-live-p top))
+             (should (= (window-total-width top) (window-total-width (get-buffer-window footer-buffer))))
+             (should (window-parameter top 'context-panels-tabs))
+             (should (eq (window-parameter body 'tab-line-format) 'none)))
            (context-panels-footer-hide-lateral-pane body)
            (should-not (window-live-p rail))
            (should (window-live-p input-window))
@@ -308,6 +318,8 @@
            (setq body (get-buffer-window panel))
            (should (eq (get-buffer-window index)
                        (context-panels-footer-display-lateral-pane body index 18)))
+           (context-panels-tabs-update body)
+           (should (window-parameter (context-panels-footer--tab-host body) 'context-panels-tabs))
            (context-panels-footer-delete-view body)
            (should-not (get-buffer-window index))
            (should-not (get-buffer-window input))
